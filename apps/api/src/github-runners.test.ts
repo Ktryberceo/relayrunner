@@ -164,8 +164,14 @@ describe("adding GitHub runners", () => {
     env.ROUTER = {
       getByName: () => ({
         githubRunners,
-        githubRunnerLists: (installationId: number, scopes: RunnerScope[]) =>
-          Promise.all(scopes.map((scope) => githubRunners(installationId, scope))),
+        githubRunnerLists: (
+          installationId: number,
+          scopes: RunnerScope[],
+          options?: { fresh?: boolean },
+        ) => {
+          freshScans.push(options?.fresh ?? false);
+          return Promise.all(scopes.map((scope) => githubRunners(installationId, scope)));
+        },
       }),
     } as unknown as Env["ROUTER"];
   });
@@ -181,6 +187,8 @@ describe("adding GitHub runners", () => {
   let githubPaths: string[];
   // Runner lists read through the Router's cache (the fake reads GitHub every time).
   let routerReads = 0;
+  // Whether each repo scan asked to skip the Router's cache.
+  let freshScans: boolean[] = [];
 
   beforeEach(() => {
     runners = [
@@ -192,6 +200,7 @@ describe("adding GitHub runners", () => {
       runner(16, "blacksmith-2vcpu-ubuntu-2404-def", "Linux", []),
     ];
     repoRunners = {};
+    freshScans = [];
     groups = [{ id: 1, name: "Default", visibility: "all" }];
     labelCalls = [];
     githubPaths = [];
@@ -286,6 +295,41 @@ describe("adding GitHub runners", () => {
       blocked: null,
       machineId: null,
     });
+  });
+
+  test("says when a runner last finished a job, from recent job times", async () => {
+    const { cookie, installationId } = await setup();
+    const job = (id: number, runnerName: string, hoursAgo: number) => {
+      const completedAt = new Date(Date.now() - hoursAgo * 3_600_000);
+      return {
+        id,
+        installationId,
+        repositoryId: 1,
+        repositoryFullName: "acme/app",
+        runId: id,
+        runAttempt: 1,
+        name: "build",
+        labels: ["self-hosted"],
+        runnerName,
+        startedAt: completedAt,
+        completedAt,
+      };
+    };
+    await createDb(env.DB)
+      .insert(schema.jobTiming)
+      .values([
+        job(installationId * 10 + 1, "atticus-mac-mini", 5),
+        job(installationId * 10 + 2, "atticus-mac-mini", 2),
+        // Too old to count as recent.
+        job(installationId * 10 + 3, "atticus-mac-mini", 24 * 30),
+      ]);
+    const response = await testing.call(env, "/machines/github-runners?groups=false", cookie);
+    const { orgs } = (await response.json()) as {
+      orgs: { runners: { id: number; lastJobAt: string | null }[] }[];
+    };
+    const lastJobAt = orgs[0].runners[0].lastJobAt;
+    expect(lastJobAt).not.toBeNull();
+    expect(Date.now() - Date.parse(lastJobAt!)).toBeLessThan(3 * 3_600_000);
   });
 
   test("groups=false reads only the runner list, for the found card", async () => {
@@ -549,6 +593,13 @@ describe("adding GitHub runners", () => {
         body: undefined,
       },
     ]);
+  });
+
+  test("a rescan skips the cached repo scan", async () => {
+    const { cookie } = await setup();
+    await testing.call(env, "/machines/github-runners", cookie);
+    await testing.call(env, "/machines/github-runners?fresh=true", cookie);
+    expect(freshScans).toEqual([false, true]);
   });
 
   test("looks in one repo by name, past the repos it searches on its own", async () => {
