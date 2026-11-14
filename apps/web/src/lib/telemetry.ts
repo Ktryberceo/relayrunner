@@ -74,15 +74,6 @@ export const PRESETS = [
   },
 ] as const;
 
-/** What the API's error codes mean, for errorText. */
-export const TELEMETRY_ERRORS: Record<string, string> = {
-  invalid_endpoint: "Use an https URL on the internet, like https://api.honeycomb.io.",
-  missing_header_value: "Enter a value for each header.",
-  invalid_body: "Check the header names: letters, numbers and dashes, each used once.",
-  token_storage_unavailable: "Saving keys isn't set up on this server yet.",
-  forbidden: "Only owners and admins can change telemetry.",
-};
-
 /** Previews without an API: sending to Honeycomb. */
 export function sampleTelemetry(): Telemetry {
   return {

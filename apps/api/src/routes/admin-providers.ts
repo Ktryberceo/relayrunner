@@ -13,6 +13,7 @@ import type { AppEnv } from "../app.ts";
 import { createDb, schema } from "../db/index.ts";
 import { who } from "../middleware/admin.ts";
 import { forgetCatalog, readCatalog } from "../provider-catalog.ts";
+import { AppError } from "@relayrunner/errors";
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 // Blank or left out is null.
@@ -76,23 +77,23 @@ export const adminProviderRoutes = new Hono<AppEnv>()
   .get("/", async (c) => c.json({ providers: await readCatalog(createDb(c.env.DB)) }))
   .post("/", async (c) => {
     const parsed = NewProviderBody.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: "invalid_provider" }, 400);
+    if (!parsed.success) throw new AppError("PROVIDER_INVALID");
     const { id, ...fields } = parsed.data;
     const catalog = await readCatalog(createDb(c.env.DB));
     const problem = providerIdProblem(catalog, id) ?? prefixProblem(catalog, id, fields.prefixes);
-    if (problem) return c.json({ error: problem }, problem === "provider_exists" ? 409 : 400);
+    if (problem) throw new AppError(problem);
     await save(c, id, fields, "provider added");
     return c.json({ ok: true }, 201);
   })
   .put("/:id", async (c) => {
     const id = c.req.param("id");
     const parsed = ProviderBody.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: "invalid_provider" }, 400);
+    if (!parsed.success) throw new AppError("PROVIDER_INVALID");
     const catalog = await readCatalog(createDb(c.env.DB));
-    if (!catalog.some((provider) => provider.id === id)) return c.json({ error: "not_found" }, 404);
+    if (!catalog.some((provider) => provider.id === id)) throw new AppError("NOT_FOUND");
     if (!isProviderId(id)) {
       const problem = prefixProblem(catalog, id, parsed.data.prefixes);
-      if (problem) return c.json({ error: problem }, 400);
+      if (problem) throw new AppError(problem);
     }
     await save(c, id, parsed.data, "provider saved");
     return c.json({ ok: true });
@@ -103,7 +104,7 @@ export const adminProviderRoutes = new Hono<AppEnv>()
       .delete(schema.provider)
       .where(eq(schema.provider.id, id))
       .returning();
-    if (!row) return c.json({ error: "not_found" }, 404);
+    if (!row) throw new AppError("NOT_FOUND");
     forgetCatalog();
     audit(c, isProviderId(id) ? "provider reset" : "provider removed", id);
     return c.json({ ok: true });

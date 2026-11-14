@@ -25,7 +25,6 @@ import {
   sampleTelemetry,
   saveTelemetry,
   type Telemetry,
-  TELEMETRY_ERRORS,
   testTelemetry,
 } from "@/lib/telemetry";
 
@@ -152,7 +151,7 @@ function ExportForm({
     try {
       await action();
     } catch (caught) {
-      setNotice({ ok: false, text: errorText(caught, TELEMETRY_ERRORS) });
+      setNotice({ ok: false, text: errorText(caught) });
     } finally {
       setPending(false);
     }

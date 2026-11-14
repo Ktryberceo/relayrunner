@@ -132,7 +132,7 @@ describe("telemetry settings", () => {
       { name: "x-honeycomb-team", hint: "1234" },
     ]);
     const missing = await save(cookie, { ...settings, headers: [{ name: "x-other" }] });
-    expect(await missing.json()).toMatchObject({ error: "missing_header_value" });
+    expect(await missing.json()).toMatchObject({ error: { code: "TELEMETRY_HEADER_MISSING" } });
   });
 
   test("refuses endpoints it shouldn't call", async () => {
@@ -145,7 +145,9 @@ describe("telemetry settings", () => {
       "https://api.relayrunner.app",
     ]) {
       const response = await save(cookie, { ...settings, endpoint });
-      expect(await response.json(), endpoint).toMatchObject({ error: "invalid_endpoint" });
+      expect(await response.json(), endpoint).toMatchObject({
+        error: { code: "TELEMETRY_ENDPOINT_INVALID" },
+      });
     }
   });
 

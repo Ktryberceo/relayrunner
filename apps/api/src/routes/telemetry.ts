@@ -4,7 +4,7 @@ import type { AppEnv } from "../app.ts";
 import { requireUser } from "../middleware/session.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { requireManager } from "../roles.ts";
-import { tokenStorage } from "./providers.ts";
+import { AppError } from "@relayrunner/errors";
 import {
   deleteTelemetry,
   saveTelemetry,
@@ -36,10 +36,13 @@ const SaveBody = z.object({
 export const telemetryRoutes = new Hono<AppEnv>()
   .use("*", requireUser, requireWorkspace)
   .get("/", async (c) => c.json(await telemetryView(c.var.db, c.var.workspace.id)))
-  .use("*", requireManager, tokenStorage)
+  .use("*", requireManager)
   .put("/", async (c) => {
     const parsed = SaveBody.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: "invalid_body" }, 400);
+    if (!parsed.success)
+      throw new AppError("INVALID_REQUEST", {
+        message: "Check the header names: letters, numbers and dashes, each used once.",
+      });
     const result = await saveTelemetry(
       c.env,
       c.var.db,
@@ -47,13 +50,13 @@ export const telemetryRoutes = new Hono<AppEnv>()
       c.var.user!.id,
       parsed.data,
     );
-    if (!result.ok) return c.json({ error: result.error, message: result.message }, 400);
+    if (!result.ok) throw new AppError(result.error, { message: result.message });
     return c.json(result.telemetry);
   })
   .delete("/", async (c) => c.json(await deleteTelemetry(c.var.db, c.var.workspace.id)))
   // Send a small test trace with the saved settings.
   .post("/test", async (c) => {
     const result = await testTelemetry(c.env, c.var.db, c.var.workspace.id);
-    if (!result) return c.json({ error: "not_configured" }, 404);
+    if (!result) throw new AppError("TELEMETRY_NOT_CONFIGURED");
     return c.json(result);
   });

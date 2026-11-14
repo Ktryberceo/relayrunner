@@ -1,3 +1,4 @@
+import { ERRORS } from "@relayrunner/errors";
 import { createFileRoute } from "@tanstack/react-router";
 import { Trash2Icon } from "lucide-react";
 import { type FormEvent, useState } from "react";
@@ -40,11 +41,6 @@ const providerName = (id: string) => providerInfo(id).name;
 
 const rateKey = (rate: Pick<AdminRate, "provider" | "rate">) => `${rate.provider}:${rate.rate}`;
 const perText = (rate: Pick<AdminRate, "per">) => (rate.per === "vcpu" ? " per vCPU" : "");
-
-const ERRORS: Record<string, string> = {
-  price_exists: "That rate already has a price from that day. Remove it first to correct it.",
-  invalid_price: "Check the price and date.",
-};
 
 function PricesPage() {
   const loaded = Route.useLoaderData();
@@ -189,7 +185,7 @@ function PriceCheck({
       await run();
       await onChange(message);
     } catch (caught) {
-      setError(errorText(caught, ERRORS));
+      setError(errorText(caught));
     } finally {
       setBusy(false);
     }
@@ -293,7 +289,7 @@ function AddPrice({
     const perRunner = Number(price);
     const size = rate.per === "vcpu" ? Number(vcpus) : 1;
     if (!(perRunner > 0) || !(size > 0)) {
-      setError(ERRORS.invalid_price!);
+      setError(ERRORS.PRICE_INVALID.message);
       return;
     }
     setError(null);
@@ -310,7 +306,7 @@ function AddPrice({
       setSource("");
       await onAdded(rate, from);
     } catch (caught) {
-      setError(errorText(caught, ERRORS));
+      setError(errorText(caught));
     } finally {
       setSaving(false);
     }

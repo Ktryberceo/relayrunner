@@ -107,7 +107,11 @@ export interface SaveInput {
 
 export type SaveResult =
   | { ok: true; telemetry: TelemetryView }
-  | { ok: false; error: "invalid_endpoint" | "missing_header_value"; message: string };
+  | {
+      ok: false;
+      error: "TELEMETRY_ENDPOINT_INVALID" | "TELEMETRY_HEADER_MISSING";
+      message: string;
+    };
 
 /** Save (or replace) the workspace's export. Throws TokenKeyError when headers can't be sealed. */
 export async function saveTelemetry(
@@ -119,14 +123,18 @@ export async function saveTelemetry(
 ): Promise<SaveResult> {
   const endpoint = input.endpoint.trim().replace(/\/+$/, "");
   const problem = endpointProblem(endpoint);
-  if (problem) return { ok: false, error: "invalid_endpoint", message: problem };
+  if (problem) return { ok: false, error: "TELEMETRY_ENDPOINT_INVALID", message: problem };
   const existing = await load(db, workspaceId);
   const saved = existing ? await openHeaders(env, existing) : {};
   const headers: Record<string, string> = {};
   for (const { name, value } of input.headers) {
     const kept = value || saved[name];
     if (!kept)
-      return { ok: false, error: "missing_header_value", message: `Enter a value for ${name}` };
+      return {
+        ok: false,
+        error: "TELEMETRY_HEADER_MISSING",
+        message: `Enter a value for ${name}.`,
+      };
     headers[name] = kept;
   }
   const values = {
