@@ -13,7 +13,7 @@ type WorkflowJobMessage = Extract<WebhookMessage, { event: "workflow_job" }>;
 
 const table = schema.jobTiming;
 const daily = schema.jobTimingDaily;
-const { jobCount, jobCountDay, jobCountHour } = schema;
+const { jobCount, jobCountDay, jobCountHour, signalDay } = schema;
 export const DAY_MS = 86_400_000;
 
 // GitHub bills a job by the minute, rounded up. A job that finishes in under this is the free-checks
@@ -175,7 +175,7 @@ const PURGE_BATCH = 5_000;
 
 /**
  * The hourly cleanup: rolls finished jobs past RAW_RETENTION_DAYS up into job_timing_daily, drops
- * daily rows and job counts past the report's range, and drops unfinished jobs GitHub has given up on. Returns
+ * daily rows, job counts and signal days past the report's range, and drops unfinished jobs GitHub has given up on. Returns
  * how many job_timing rows went.
  */
 export async function purgeOldJobTimings(db: Db, now = Date.now()): Promise<number> {
@@ -194,6 +194,7 @@ export async function purgeOldJobTimings(db: Db, now = Date.now()): Promise<numb
     purgeBefore(db, jobCountHour, jobCountHour.hour, retained),
     purgeBefore(db, jobCount, jobCount.hour, retained),
     purgeBefore(db, jobCountDay, jobCountDay.day, retained),
+    purgeBefore(db, signalDay, signalDay.day, retained),
   ]);
   return finished + unfinished;
 }
@@ -261,8 +262,8 @@ const ROLLUP_SQL = `
     billed_minutes = billed_minutes + excluded.billed_minutes,
     short_billed_minutes = short_billed_minutes + excluded.short_billed_minutes`;
 
-// The UTC midnight starting the day `ms` falls on.
-function utcDay(ms: number) {
+/** The UTC midnight starting the day `ms` falls on. */
+export function utcDay(ms: number) {
   return Math.floor(ms / DAY_MS) * DAY_MS;
 }
 
