@@ -56,17 +56,18 @@ export default defineConfig({
             "docs/get-started/overview",
             "docs/get-started/quickstart",
             "docs/get-started/install",
-            "docs/get-started/move-over",
             "docs/get-started/agents",
+            "docs/get-started/move-over",
           ],
         },
         {
-          label: "Concepts",
+          label: "Routing",
           items: [
             "docs/concepts/principles",
             "docs/concepts/routing",
             "docs/concepts/runner-order",
             "docs/concepts/optimized-checks",
+            "docs/guides/spend-controls",
           ],
         },
         {
@@ -76,61 +77,74 @@ export default defineConfig({
             "docs/runners/self-hosted",
             "docs/runners/github",
             "docs/runners/hosted",
+            "docs/reference/labels",
+            "docs/contribute/add-provider",
           ],
         },
+        // Collapsed groups start closed, but the one holding the current page always opens.
         {
-          label: "Guides",
+          label: "Use cases",
+          collapsed: true,
           items: [
             "docs/guides/laptop-ci",
-            "docs/guides/spend-controls",
             "docs/guides/mac-builds",
-            "docs/guides/agent-surge",
             "docs/guides/team-machines",
+            "docs/guides/agent-surge",
           ],
         },
         {
-          label: "Dashboard",
+          label: "Observability",
+          collapsed: true,
           items: [
             "docs/dashboard/activity",
             "docs/dashboard/signals",
             "docs/dashboard/performance",
             "docs/dashboard/usage",
             "docs/dashboard/telemetry",
-            "docs/dashboard/workspaces",
-            "docs/dashboard/remove",
           ],
         },
         {
-          label: "Reference",
+          label: "Developer tools",
+          collapsed: true,
           items: [
             "docs/reference/cli",
             "docs/reference/relay-inputs",
             "docs/reference/repo-config",
-            "docs/reference/labels",
-            "docs/reference/github-app",
             "docs/reference/mcp",
             "docs/reference/api",
             // An Astro page, not a docs file: Scalar renders /openapi.json there.
             { label: "API routes", link: "/docs/reference/api/routes" },
-            "docs/reference/errors",
-            "docs/reference/security",
-            "docs/reference/privacy",
-            "docs/reference/troubleshooting",
-            "docs/reference/faq",
-            // Built from apps/cli/CHANGELOG.md (src/lib/changelog.ts).
-            "docs/changelog",
           ],
         },
         {
-          label: "Contribute",
-          items: ["docs/contribute/add-provider", "docs/contribute/feedback"],
+          label: "Admin",
+          collapsed: true,
+          items: [
+            "docs/dashboard/workspaces",
+            "docs/reference/github-app",
+            "docs/reference/security",
+            "docs/reference/privacy",
+            "docs/dashboard/remove",
+          ],
+        },
+        {
+          label: "Help",
+          collapsed: true,
+          items: [
+            "docs/reference/troubleshooting",
+            "docs/reference/errors",
+            "docs/reference/faq",
+            // Built from apps/cli/CHANGELOG.md (src/lib/changelog.ts).
+            "docs/changelog",
+            "docs/contribute/feedback",
+          ],
         },
       ],
       // Put the code block styles inline in each page. By default they're a separate stylesheet
       // linked from the first code block, in the body, so a page change paints the header first
       // and the rest only once that file arrives: on pages with code, the docs blinked.
       expressiveCode: { emitExternalStylesheet: false },
-      // Flat, non-collapsing sidebar, and the page title with its description under it.
+      // Flat sidebar with collapsible groups, and the page title with its description under it.
       components: {
         Sidebar: "./src/components/Sidebar.astro",
         PageTitle: "./src/components/PageTitle.astro",
