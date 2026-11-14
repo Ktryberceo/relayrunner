@@ -24,7 +24,7 @@ import {
   type RunnerKey,
   type RunnerStep,
 } from "@relayrunner/runner-order";
-import { HOSTED_PROVIDER_IDS } from "@relayrunner/providers";
+import { HOSTED_PROVIDER_IDS, type HostedProviderId } from "@relayrunner/providers";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
   CheckIcon,
@@ -32,10 +32,12 @@ import {
   GripVerticalIcon,
   MoreHorizontalIcon,
   PlusIcon,
+  TriangleAlertIcon,
 } from "lucide-react";
 import { useState } from "react";
 import { CopyButton } from "@/components/add-runner";
 import { CodeBlock } from "@/components/code-block";
+import { ProviderMark } from "@/components/providers";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -68,6 +70,7 @@ export function RunnerOrderEditor({
   editable,
   machines,
   accounts,
+  installedApps = null,
 }: {
   workspaceId: string;
   order: { steps: RunnerStep[] };
@@ -78,6 +81,8 @@ export function RunnerOrderEditor({
   machines: Machine[] | null;
   /** This month's Actions minutes per connected GitHub account (#116). */
   accounts: AccountUsage[];
+  /** The providers whose GitHub App the org has installed, or null when we can't tell. */
+  installedApps?: HostedProviderId[] | null;
 }) {
   const router = useRouter();
   const [saved, setSaved] = useState({ steps: order.steps, isDefault });
@@ -149,6 +154,7 @@ export function RunnerOrderEditor({
                     accounts={accounts}
                     limits={limits}
                     slots={slots}
+                    appMissing={appMissing(step.key, installedApps)}
                     onChange={(next) => change(steps.map((s, i) => (i === index ? next : s)))}
                     onMove={(by) => change(arrayMove(steps, index, index + by))}
                     onRemove={() => change(steps.filter((_, i) => i !== index))}
@@ -172,13 +178,13 @@ export function RunnerOrderEditor({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-64">
                 <AddItem
-                  label={RUNNER_LABELS.machine}
-                  note={slots.has("machine") ? "Already in the order" : "Your runners, as one pool"}
+                  runner="machine"
+                  note={slots.has("machine") ? "Already in the order" : SELF_HOSTED_NOTE}
                   disabled={slots.has("machine")}
                   onSelect={() => addStep("machine")}
                 />
                 <AddItem
-                  label={RUNNER_LABELS.github}
+                  runner="github"
                   note={
                     !githubSlotFree
                       ? "Already in the order"
@@ -193,11 +199,13 @@ export function RunnerOrderEditor({
                 {HOSTED_PROVIDER_IDS.map((id) => (
                   <AddItem
                     key={id}
-                    label={RUNNER_LABELS[id]}
+                    runner={id}
                     note={
                       slots.has(id)
                         ? "Already in the order"
-                        : `Needs ${RUNNER_LABELS[id]}'s GitHub app`
+                        : installedApps?.includes(id)
+                          ? "App installed"
+                          : `Needs ${RUNNER_LABELS[id]}'s GitHub app`
                     }
                     disabled={slots.has(id)}
                     onSelect={() => addStep(id)}
@@ -243,20 +251,28 @@ export function RunnerOrderEditor({
   );
 }
 
+/** What the Self-hosted step covers: runners added from GitHub and machines connected with the CLI. */
+const SELF_HOSTED_NOTE = "Your own runners and CLI-connected machines";
+
 function AddItem({
-  label,
+  runner,
   note,
   disabled,
   onSelect,
 }: {
-  label: string;
+  runner: RunnerKey;
   note: string;
   disabled: boolean;
   onSelect: () => void;
 }) {
   return (
-    <DropdownMenuItem disabled={disabled} onSelect={onSelect} className="grid gap-0.5">
-      <span>{label}</span>
+    <DropdownMenuItem
+      disabled={disabled}
+      onSelect={onSelect}
+      className="grid grid-cols-[auto_1fr] items-start gap-x-2.5 gap-y-0.5"
+    >
+      <ProviderMark provider={runner} className="row-span-2 mt-0.5" />
+      <span>{RUNNER_LABELS[runner]}</span>
       <span className="text-xs text-muted-foreground">{note}</span>
     </DropdownMenuItem>
   );
@@ -292,6 +308,7 @@ function StepCard({
   accounts,
   limits,
   slots,
+  appMissing,
   onChange,
   onMove,
   onRemove,
@@ -304,6 +321,8 @@ function StepCard({
   accounts: AccountUsage[];
   limits: LimitAvailability;
   slots: Set<string>;
+  /** A hosted provider whose GitHub App the org doesn't have, so its runners never start. */
+  appMissing: boolean;
   onChange: (step: RunnerStep) => void;
   onMove: (by: -1 | 1) => void;
   onRemove: () => void;
@@ -350,20 +369,32 @@ function StepCard({
           ) : (
             <span className="w-2" />
           )}
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <h2 className="text-sm font-semibold">{label}</h2>
-            {verdict?.state === "next" && (
-              <span className="rounded-full border border-go-edge bg-go-soft px-2 text-[11.5px] font-semibold text-go">
-                Next job
-              </span>
+          <ProviderMark provider={step.key} />
+          <div className="grid min-w-0 flex-1 gap-0.5">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold">{label}</h2>
+              {verdict?.state === "next" && (
+                <span className="rounded-full border border-go-edge bg-go-soft px-2 text-[11.5px] font-semibold text-go">
+                  Next job
+                </span>
+              )}
+              {verdict?.state === "skipped" && (
+                <span
+                  title={verdict.reason}
+                  className="rounded-full border px-2 text-[11.5px] text-muted-foreground"
+                >
+                  Skipped
+                </span>
+              )}
+            </div>
+            {step.key === "machine" && (
+              <p className="text-xs text-muted-foreground">{SELF_HOSTED_NOTE}</p>
             )}
-            {verdict?.state === "skipped" && (
-              <span
-                title={verdict.reason}
-                className="rounded-full border px-2 text-[11.5px] text-muted-foreground"
-              >
-                Skipped
-              </span>
+            {appMissing && (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0 text-destructive" />
+                GitHub app not installed, so jobs here won't start.
+              </p>
             )}
           </div>
           {step.key === "github" && editable ? (
@@ -407,8 +438,14 @@ function StepCard({
   );
 }
 
+/** Whether a step is a hosted provider the org hasn't installed. False when we can't tell. */
+function appMissing(key: RunnerKey, installed: HostedProviderId[] | null) {
+  if (!installed || key === "machine" || key === "github") return false;
+  return !installed.includes(key);
+}
+
 function ruleText(step: RunnerStep) {
-  if (step.key === "machine") return "When one is free";
+  if (step.key === "machine") return "When available";
   if (step.key === "github" && step.limit) return `While under ${step.limit.percent}%`;
   return "Always";
 }
