@@ -95,6 +95,11 @@ const WAIT_POLL_MS = 10_000;
 interface WaitingJob extends Waiting {
   job: PickedJob;
 }
+// A route as the Router keeps it. A route to a connected machine keeps the job its pick was for,
+// so the job can go back in line if the machine goes offline before the job is sent (requeue).
+interface StoredRoute extends Route {
+  job?: PickedJob;
+}
 // Each hosted provider runner type's health (src/provider-health.ts), by healthId.
 const HEALTH_KEY = "health:";
 
@@ -293,10 +298,10 @@ export class Router extends DurableObject<Env> {
   }
 
   // Sends a waiting job its machine took to that machine, once its `queued` webhook has said which
-  // job it is (before that, the route waits for claim like any other). False when sending failed:
-  // the job goes back in line, in its old place.
+  // job it is (before that, the route waits for claim like any other). False when sending failed
+  // or the machine went offline: the job goes back in line, in its old place.
   private async handOff(entry: WaitingJob): Promise<boolean> {
-    const route = await this.ctx.storage.get<Route>(ROUTE_KEY + entry.id);
+    const route = await this.ctx.storage.get<StoredRoute>(ROUTE_KEY + entry.id);
     if (route?.jobId === undefined) return true;
     try {
       await setJobMachine(createDb(this.env.DB), route.jobId, route.machineId);
@@ -314,7 +319,7 @@ export class Router extends DurableObject<Env> {
           result,
         }),
       );
-      return true;
+      if (result !== "offline") return true;
     } catch (error) {
       console.error(
         JSON.stringify({
@@ -324,10 +329,43 @@ export class Router extends DurableObject<Env> {
           error: errorMessage(error),
         }),
       );
-      await this.ctx.storage.delete(ROUTE_KEY + entry.id);
-      await this.ctx.storage.put(WAIT_KEY + entry.id, { ...entry, jobId: route.jobId });
-      return false;
     }
+    await this.backInLine(route, entry);
+    return false;
+  }
+
+  /**
+   * Puts a claimed job back in line when its machine went offline before the job reached it
+   * (MachineLink.run said "offline"), so it doesn't sit queued on a label nobody serves (#71). The
+   * next machine with room takes it, or the same one once it reconnects; until then it waits like
+   * a job for a full machine. The job keeps its place in line and its label.
+   */
+  async requeue(routeId: string): Promise<void> {
+    const queued = await this.ctx.blockConcurrencyWhile(async () => {
+      const route = await this.ctx.storage.get<StoredRoute>(ROUTE_KEY + routeId);
+      if (!route?.job || route.jobId === undefined || route.state === "done") return false;
+      await this.backInLine(route, {
+        id: route.id,
+        queuedAt: route.createdAt,
+        repositoryId: route.repositoryId,
+        runId: route.runId,
+        ...(route.runAttempt !== undefined && { runAttempt: route.runAttempt }),
+        job: route.job,
+      });
+      return true;
+    });
+    if (!queued) return;
+    console.log(JSON.stringify({ msg: "relayrunner job back in line", routeId }));
+    await this.drain();
+  }
+
+  // Ends a route whose job didn't reach its machine and puts the job back in line under the same
+  // id, giving back the machine's slot.
+  private async backInLine(route: StoredRoute, entry: WaitingJob) {
+    await this.ctx.storage.delete(ROUTE_KEY + route.id);
+    await this.ctx.storage.put(WAIT_KEY + route.id, { ...entry, jobId: route.jobId });
+    await this.env.MACHINE_LINK.getByName(route.machineId).dropHold(route.id);
+    await this.wakeIn(WAIT_POLL_MS);
   }
 
   async alarm() {
@@ -612,7 +650,7 @@ export class Router extends DurableObject<Env> {
       const routingLabel = routingLabels.get(machine.id);
       const isolated = runsIsolated(machine, job.machine, job.github);
       const os = places.get(machine.id)?.[isolated ? "vm" : "host"];
-      const route: Route = {
+      const route: StoredRoute = {
         id: routeId,
         machineId: machine.id,
         machineName: machine.name,
@@ -627,7 +665,7 @@ export class Router extends DurableObject<Env> {
         ...((rerun ?? waitingNow)?.runAttempt !== undefined && {
           runAttempt: (rerun ?? waitingNow)!.runAttempt,
         }),
-        ...(routingLabel ? { routingLabel } : {}),
+        ...(routingLabel ? { routingLabel } : { job }),
         ...(os ? { os } : {}),
         ...(isolated ? { isolated: true } : {}),
       };
