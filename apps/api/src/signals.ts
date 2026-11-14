@@ -9,10 +9,13 @@
  * webhooks still land, and replaces those days' signal_day rows. The page then sums a few rows per
  * day, whatever the range, instead of reading every run. An installation with no rows yet gets the
  * last 30 days at once, as many whole days as job_timing keeps single jobs.
+ *
+ * The same rows hold the page's Breakdown: every counted job by who started its run, its workflow,
+ * branch and trigger.
  */
 import { and, eq, exists, gte, isNull, sql } from "drizzle-orm";
 import type { PriceBook } from "@relayrunner/providers";
-import { type Db, createDb, schema } from "./db/index.ts";
+import { type Db, createDb, prepare, schema } from "./db/index.ts";
 import type { Env } from "./env.ts";
 import { enqueueInstallationTasks } from "./installation-tasks.ts";
 import { PICK, RAN_ON_RUNNER } from "./job-times.ts";
@@ -54,6 +57,10 @@ export const SIGNALS = {
 
 export type SignalId = keyof typeof SIGNALS;
 
+/** How the Breakdown splits every counted job. The repository view sums any of the others. */
+export const BREAKDOWNS = ["person", "workflow", "branch", "trigger"] as const;
+export type BreakdownBy = (typeof BREAKDOWNS)[number] | "repository";
+
 // signal_day rows that hold every counted job, for the page's totals and the threshold.
 const TOTAL = "total";
 // How long after UTC midnight each run still works out yesterday, for late webhooks.
@@ -73,13 +80,16 @@ const MIN_SHARE = 0.01;
 // Rows each signal lists, and the least time a row needs to be listed.
 const MAX_ROWS = 5;
 const MIN_ROW_MINUTES = 1;
+// Breakdown values kept per day, repo and view; the rest share one row with an empty subject.
+const MAX_DAY_VALUES = 25;
+// Rows each Breakdown view lists before the rest are summed into one.
+const MAX_BREAKDOWN_ROWS = 10;
 
 const timing = schema.jobTiming;
 const run = schema.workflowRun;
 const day = schema.signalDay;
 const installation = schema.githubInstallation;
 
-type DayRow = typeof day.$inferInsert;
 // Whether each of the installation's repos is private, by id, for the price of its minutes.
 type Privacy = Map<number, boolean>;
 
@@ -133,7 +143,7 @@ export async function rollUpSignals(db: Db, installationId: number, now = Date.n
   // The first run goes back as far as job_timing keeps single jobs, in whole days.
   const since = seen ? utcDay(now - LATE_MS) : utcDay(now) - (RAW_RETENTION_DAYS - 2) * DAY_MS;
   const privacy: Privacy = new Map(repos.map((repo) => [repo.id, repo.private]));
-  const rows = new Rows(installationId);
+  const rows = new Rows();
   const scope = { db, book, rows, privacy, installationId, since };
   await Promise.all([
     addJobs(scope),
@@ -145,17 +155,32 @@ export async function rollUpSignals(db: Db, installationId: number, now = Date.n
     addWideRuns(scope),
   ]);
 
+  // The rows go in as JSON parameters, a few thousand per statement, so even a first run's 30 days
+  // take a handful of D1 queries. Sent straight to D1: Drizzle's batch can't carry a raw statement.
   const values = rows.values();
-  // A statement binds at most 100 values; a signal_day row has 10.
-  const inserts = chunk(values, 9).map((part) => db.insert(day).values(part));
-  await db.batch([
-    db
-      .delete(day)
-      .where(and(eq(day.installationId, installationId), gte(day.day, new Date(since)))),
-    ...inserts,
+  const d1 = db.$client;
+  const cleared = db
+    .delete(day)
+    .where(and(eq(day.installationId, installationId), gte(day.day, new Date(since))));
+  await d1.batch([
+    prepare(db, cleared),
+    ...chunk(values, ROWS_PER_INSERT).map((part) =>
+      d1.prepare(INSERT_SQL).bind(installationId, JSON.stringify(part)),
+    ),
   ]);
   return values.length;
 }
+
+const INSERT_SQL = `
+  insert into signal_day (installation_id, day, signal, repository_id, repository_full_name,
+    subject, workflow_path, count, run_ms, cost)
+  select ?1, value ->> 'day', value ->> 'signal', value ->> 'repositoryId',
+    value ->> 'repositoryFullName', value ->> 'subject', value ->> 'workflowPath',
+    value ->> 'count', value ->> 'runMs', value ->> 'cost'
+  from json_each(?2)`;
+
+// Rows per insert statement: well under D1's limit on one parameter's size.
+const ROWS_PER_INSERT = 2000;
 
 type Scope = {
   db: Db;
@@ -177,15 +202,25 @@ function rate(
   return rateFor(book, runnerClass(labels, group), privacy.get(repositoryId) ?? null, at);
 }
 
-// Every counted job (the usage report's filter) into the totals; the short ones on a billed runner
-// into short-jobs, with the unused part of their last minute as its time and cost; and the ones
-// that waited for a runner into queue-waits, with the wait as its time. Picks (runs-on:
-// relayrunner) only wait for RelayRunner, so they don't count as waiting.
+// Every counted job (the usage report's filter) into the totals and the Breakdown; the short ones
+// on a billed runner into short-jobs, with the unused part of their last minute as its time and
+// cost; and the ones that waited for a runner into queue-waits, with the wait as its time. Picks
+// (runs-on: relayrunner) only wait for RelayRunner, so they don't count as waiting.
 async function addJobs(scope: Scope) {
   const { db, rows, installationId, since } = scope;
   const isShort = sql`(${DURATION_MS} < ${SHORT_JOB_SECONDS * 1000})`;
   const waitMs = sql`(${timing.startedAt} - ${timing.queuedAt})`;
   const waited = sql`(${waitMs} >= ${QUEUE_WAIT_MS} and not ${PICK})`;
+  // A run counts once, on its first counted job (job_timing_run_idx), even across midnight.
+  const first = sql`(${timing.id} = (select min(k.id) from job_timing k
+    where k.run_id = ${timing.runId} and k.run_attempt = ${timing.runAttempt}
+      and k.started_at is not null and k.runner_name is not null
+      and coalesce(k.conclusion, '') != 'skipped'))`;
+  // Who started the run, and what: re-runs count as their own trigger.
+  const person = sql<string | null>`coalesce(${run.startedByLogin}, ${run.actorLogin})`;
+  const trigger = sql<
+    string | null
+  >`case when ${run.runAttempt} > 1 then 'rerun' else ${run.event} end`;
   const found = await db
     .select({
       // Whole UTC days: a bound number divides as a real, so cast it back.
@@ -198,7 +233,11 @@ async function addJobs(scope: Scope) {
       job: timing.name,
       labels: timing.labels,
       runnerGroupName: timing.runnerGroupName,
+      person,
+      branch: run.headBranch,
+      trigger,
       jobs: sql<number>`count(*)`,
+      runs: sql<number>`sum(${first})`,
       runMs: sql<number>`sum(${DURATION_MS})`,
       billed: sql<number>`sum(${BILLED_MINUTES})`,
       shortJobs: sql<number>`sum(${isShort})`,
@@ -223,12 +262,18 @@ async function addJobs(scope: Scope) {
       timing.name,
       timing.labels,
       timing.runnerGroupName,
+      person,
+      run.headBranch,
+      trigger,
     );
+  const breakdown = new DayBreakdown();
   for (const row of found) {
     const at = Number(row.day);
     const perMinute = rate(scope, row.labels, row.runnerGroupName, row.repositoryId, at);
     const where = { day: at, repositoryId: row.repositoryId, repository: row.repository };
-    rows.add({ ...where, signal: TOTAL, subject: "" }, row.jobs, row.runMs, row.billed * perMinute);
+    const cost = row.billed * perMinute;
+    rows.add({ ...where, signal: TOTAL, subject: "" }, row.jobs, row.runMs, cost);
+    breakdown.add(where, row, { runs: Number(row.runs), runMs: Number(row.runMs), cost });
     if (row.waitedJobs) {
       rows.add(
         { ...where, signal: "queue-waits", subject: runnerSubject(row.labels) },
@@ -251,7 +296,61 @@ async function addJobs(scope: Scope) {
       (unusedMs / 60_000) * perMinute,
     );
   }
+  breakdown.addTo(rows);
 }
+
+type DaySums = { runs: number; runMs: number; cost: number };
+
+// The Breakdown's rows for each day: logins, branches and triggers for the whole installation
+// (repositoryId 0), and workflows per repo, which the repository view sums. Each day and view
+// keeps its MAX_DAY_VALUES values with the most time; the rest, and jobs whose run we never saw,
+// share the empty subject.
+class DayBreakdown {
+  #groups = new Map<string, { key: Omit<RowKey, "subject">; values: Map<string, Value> }>();
+
+  add(
+    where: { day: number; repositoryId: number; repository: string },
+    job: { workflow: string | null; workflowPath: string | null } & Record<
+      "person" | "branch" | "trigger",
+      string | null
+    >,
+    sums: DaySums,
+  ) {
+    for (const by of BREAKDOWNS) {
+      const perRepo = by === "workflow";
+      const key = perRepo
+        ? { ...where, signal: `by-${by}` }
+        : { day: where.day, repositoryId: 0, repository: "", signal: `by-${by}` };
+      const id = `${key.day}:${key.signal}:${key.repositoryId}`;
+      const group = this.#groups.get(id) ?? { key, values: new Map<string, Value>() };
+      this.#groups.set(id, group);
+      const subject = job[by] ?? "";
+      const value = group.values.get(subject) ?? { path: null, runs: 0, runMs: 0, cost: 0 };
+      group.values.set(subject, value);
+      if (perRepo) value.path ??= job.workflowPath;
+      value.runs += sums.runs;
+      value.runMs += sums.runMs;
+      value.cost += sums.cost;
+    }
+  }
+
+  addTo(rows: Rows) {
+    for (const { key, values } of this.#groups.values()) {
+      const ranked = [...values].sort(([, a], [, b]) => b.runMs - a.runMs);
+      ranked.forEach(([subject, value], index) => {
+        const kept = subject !== "" && index < MAX_DAY_VALUES;
+        rows.add(
+          { ...key, subject: kept ? subject : "", workflowPath: kept ? value.path : null },
+          value.runs,
+          value.runMs,
+          value.cost,
+        );
+      });
+    }
+  }
+}
+
+type Value = DaySums & { path: string | null };
 
 // The same workflow, matched by id once runs carry one and by name before that.
 const SAME_WORKFLOW = (a: string, b: string) =>
@@ -499,22 +598,22 @@ async function addFlakyJobs(scope: Scope) {
   }
 }
 
-type RowKey = Pick<DayRow, "signal" | "repositoryId" | "subject" | "workflowPath"> & {
-  day: number;
+// A signal_day row as it goes into the insert, less the installation.
+type InsertRow = Omit<typeof day.$inferInsert, "installationId" | "day"> & { day: number };
+
+type RowKey = Pick<InsertRow, "day" | "signal" | "repositoryId" | "subject"> & {
   repository: string;
+  workflowPath?: string | null;
 };
 
 // One installation's signal_day rows being summed, by their primary key.
 class Rows {
-  #rows = new Map<string, DayRow>();
-
-  constructor(readonly installationId: number) {}
+  #rows = new Map<string, InsertRow>();
 
   add(key: RowKey, count: number, runMs: number, cost: number) {
     const id = `${key.day}:${key.signal}:${key.repositoryId}:${key.subject}`;
     const row = this.#rows.get(id) ?? {
-      installationId: this.installationId,
-      day: new Date(key.day),
+      day: key.day,
       signal: key.signal,
       repositoryId: key.repositoryId,
       repositoryFullName: key.repository,
@@ -556,12 +655,33 @@ export interface Signal {
   rows: SignalRow[];
 }
 
+export interface BreakdownRow {
+  /** A login, workflow, branch, trigger (an event name, or "rerun") or repository. */
+  name: string;
+  /** The workflow's repository, on workflow rows. */
+  repository: string | null;
+  workflowPath: string | null;
+  runs: number;
+  minutes: number;
+  /** Estimated USD. */
+  cost: number;
+}
+
+export interface Breakdown {
+  /** The most time first, at most MAX_BREAKDOWN_ROWS. */
+  rows: BreakdownRow[];
+  /** Everything past those rows, and jobs whose run we never saw. */
+  other: { runs: number; minutes: number; cost: number } | null;
+}
+
 export interface SignalsReport {
   days: number;
   /** Every counted job in the range, for the area summaries. */
   totals: { jobs: number; minutes: number; cost: number };
   /** Signals over the threshold, the most time first. */
   signals: Signal[];
+  /** Every counted job split by who started it, repo, workflow, branch and trigger. */
+  breakdown: Record<BreakdownBy, Breakdown>;
 }
 
 /**
@@ -592,6 +712,7 @@ export async function signalsReport(
 
   const totals = { jobs: 0, minutes: 0, cost: 0 };
   const bySignal = new Map<SignalId, Signal>();
+  const breakdowns = new Breakdowns();
   for (const row of found) {
     const minutes = Number(row.runMs) / 60_000;
     const cost = Number(row.cost);
@@ -599,6 +720,11 @@ export async function signalsReport(
       totals.jobs += Number(row.count);
       totals.minutes += minutes;
       totals.cost += cost;
+      continue;
+    }
+    const by = BREAKDOWNS.find((view) => row.signal === `by-${view}`);
+    if (by) {
+      breakdowns.add(by, row, { runs: Number(row.count), minutes, cost });
       continue;
     }
     if (!(row.signal in SIGNALS)) continue;
@@ -629,21 +755,89 @@ export async function signalsReport(
   const signals = [...bySignal.values()]
     .filter((signal) => signal.minutes >= floor)
     .map((signal) => ({
-      ...signal,
-      minutes: Math.round(signal.minutes),
-      cost: cents(signal.cost),
+      ...rounded(signal),
       rows: signal.rows
         .filter((row) => row.minutes >= MIN_ROW_MINUTES)
         .sort((a, b) => b.minutes - a.minutes)
         .slice(0, MAX_ROWS)
-        .map((row) => ({ ...row, minutes: Math.round(row.minutes), cost: cents(row.cost) })),
+        .map(rounded),
     }))
     .sort((a, b) => b.minutes - a.minutes);
   return {
     days,
-    totals: { jobs: totals.jobs, minutes: Math.round(totals.minutes), cost: cents(totals.cost) },
+    totals: rounded(totals),
     signals,
+    breakdown: breakdowns.report(),
   };
+}
+
+type BreakdownSums = { runs: number; minutes: number; cost: number };
+type BreakdownName = Pick<BreakdownRow, "name" | "repository" | "workflowPath">;
+
+// The Breakdown's views summed from signal_day rows over the range. Logins, branches and triggers
+// are stored for the whole installation; workflows per repo, which the repository view sums.
+// Empty names are the rest of a day's values, and go to `other`.
+class Breakdowns {
+  #views = new Map<BreakdownBy, Map<string, BreakdownRow>>(
+    [...BREAKDOWNS, "repository" as const].map((by) => [by, new Map()]),
+  );
+
+  add(
+    by: (typeof BREAKDOWNS)[number],
+    row: { repository: string; subject: string; workflowPath: string | null },
+    sums: BreakdownSums,
+  ) {
+    const name = row.subject;
+    if (by !== "workflow") {
+      this.#sum(by, name, { name, repository: null, workflowPath: null }, sums);
+      return;
+    }
+    const { repository, workflowPath } = row;
+    this.#sum(by, `${repository}:${name}`, { name, repository, workflowPath }, sums);
+    this.#sum(
+      "repository",
+      repository,
+      { name: repository, repository: null, workflowPath: null },
+      sums,
+    );
+  }
+
+  #sum(by: BreakdownBy, id: string, name: BreakdownName, sums: BreakdownSums) {
+    const view = this.#views.get(by)!;
+    const found = view.get(id) ?? { ...name, runs: 0, minutes: 0, cost: 0 };
+    found.workflowPath ??= name.workflowPath;
+    found.runs += sums.runs;
+    found.minutes += sums.minutes;
+    found.cost += sums.cost;
+    view.set(id, found);
+  }
+
+  report() {
+    const entries = [...this.#views].map(([by, view]) => {
+      const rows = [...view.values()].sort((a, b) => b.minutes - a.minutes);
+      const named = rows.filter((row) => row.name !== "");
+      const rest = [...named.slice(MAX_BREAKDOWN_ROWS), ...rows.filter((row) => row.name === "")];
+      const other = rest.reduce(
+        (sum, row) => ({
+          runs: sum.runs + row.runs,
+          minutes: sum.minutes + row.minutes,
+          cost: sum.cost + row.cost,
+        }),
+        { runs: 0, minutes: 0, cost: 0 },
+      );
+      const breakdown: Breakdown = {
+        rows: named.slice(0, MAX_BREAKDOWN_ROWS).map(rounded),
+        other: rest.length ? rounded(other) : null,
+      };
+      return [by, breakdown] as const;
+    });
+    return Object.fromEntries(entries) as Record<BreakdownBy, Breakdown>;
+  }
+}
+
+// Minutes to the whole minute and USD to the cent, for the page.
+function rounded<T extends { minutes: number; cost: number }>(sums: T): T {
+  return { ...sums, minutes: Math.round(sums.minutes), cost: cents(sums.cost) };
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
