@@ -1,12 +1,20 @@
 import { getRouteApi } from "@tanstack/react-router";
-import { memo, useMemo } from "react";
+import { GitPullRequestIcon } from "lucide-react";
+import { memo, useMemo, useState } from "react";
+import { BranchHeading, toggleKey } from "@/components/branch-heading";
 import { DurationChart, jobPoints } from "@/components/duration-chart";
 import { SectionBoundary } from "@/components/error-boundary";
 import { RangePicker } from "@/components/range-picker";
 import { CommitBy } from "@/components/commit";
 import { RunLink } from "@/components/run-sheet";
 import { RunnerLink, type RunnerRef } from "@/components/runner-link";
-import { createCellContext, DataTable, dataTableColumns } from "@/components/ui/data-table";
+import {
+  createCellContext,
+  DataTable,
+  dataTableColumns,
+  type DataTableRow,
+} from "@/components/ui/data-table";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -19,6 +27,8 @@ import { timeAgo } from "@/lib/activity";
 import { formatMemory } from "@/lib/device";
 import { plural } from "@/lib/job-times";
 import { authDisabled } from "@/lib/auth-client";
+import { type BranchGroup, groupByBranch } from "@/lib/branch-groups";
+import { readFlag, saveFlag } from "@/lib/stored-flag";
 import {
   getJobs,
   type HistoryJob,
@@ -39,8 +49,54 @@ const load = (days: number) => (authDisabled ? Promise.resolve(sampleJobs(days))
 
 type ResultFilter = "all" | "failed";
 
-/** A job with what its row shows worked out once. */
-type Row = HistoryJob & { env: RunnerRef; runner: string; waitMs: number | null; runMs: number };
+/**
+ * A job with what its row shows worked out once. With `group`, a pull request or branch's heading
+ * holding its jobs as subRows; its own fields are its newest job's, so groups sort by them.
+ */
+type Row = HistoryJob & {
+  env: RunnerRef;
+  runner: string;
+  waitMs: number | null;
+  runMs: number;
+  group?: BranchGroup<Row>;
+  subRows?: Row[];
+};
+
+// Set when someone turns grouping off, so the list groups by default.
+const FLAT_KEY = "relayrunner:history:jobs-flat";
+
+/** Jobs under a heading row per pull request or branch; jobs with no known branch stand alone. */
+function groupRows(rows: Row[]): Row[] {
+  return groupByBranch(rows).map((group) =>
+    group.branch === null ? group.jobs[0]! : { ...group.jobs[0]!, group, subRows: group.jobs },
+  );
+}
+
+// A group's jobs: indented on a rail that drops from its heading's toggle, with no dividers between
+// them, only a short one from the rail where a new commit's jobs start.
+const GROUPED_ROW =
+  "[&>td:first-child]:relative [&>td:first-child]:pl-10 [&>td:first-child]:before:absolute [&>td:first-child]:before:inset-y-0 [&>td:first-child]:before:left-[21.5px] [&>td:first-child]:before:w-px [&>td:first-child]:before:bg-border";
+const NEW_COMMIT =
+  "[&>td:not(:first-child)]:border-t [&>td:first-child]:after:absolute [&>td:first-child]:after:top-0 [&>td:first-child]:after:right-0 [&>td:first-child]:after:left-[21.5px] [&>td:first-child]:after:h-px [&>td:first-child]:after:bg-border";
+
+function groupedRowClass(
+  row: DataTableRow<Row>,
+  around: { previous?: DataTableRow<Row>; next?: DataTableRow<Row> },
+) {
+  if (row.original.group) return "bg-secondary/20 hover:bg-secondary/20 [&>td]:py-2 [&>td]:pl-3";
+  if (row.depth === 0) return undefined;
+  const { previous, next } = around;
+  return cn(
+    GROUPED_ROW,
+    next?.parentId === row.parentId && "border-b-0",
+    previous &&
+      previous.parentId === row.parentId &&
+      previous.original.sha !== row.original.sha &&
+      NEW_COMMIT,
+  );
+}
+
+const rowId = (row: Row) => (row.group ? `group:${row.group.key}` : String(row.id));
 
 const [ListContext, useListContext] = createCellContext<{ showRepository: boolean }>("Jobs");
 
@@ -190,6 +246,8 @@ export const JobList = memo(function JobList({ report: first }: { report: JobsRe
     select: (search): ResultFilter => (search.result === "failed" ? "failed" : "all"),
   });
   const query = history.useSearch({ select: (search) => search.q ?? "" });
+  const [flat, setFlat] = useState(() => readFlag(FLAT_KEY));
+  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
   const setSearch = useSetSearch<HistorySearch>();
   // Each range is its own load, since the newest jobs alone can fill a busy workspace's list.
   const report = useRangeReport(first, days, load);
@@ -222,6 +280,18 @@ export const JobList = memo(function JobList({ report: first }: { report: JobsRe
           (result === "all" || isFailure(job.conclusion)),
       ),
     [rows, repository, result],
+  );
+  // A search looks for jobs, so it lists them on their own.
+  const grouped = !flat && !query.trim();
+  const tableRows = useMemo(() => (grouped ? groupRows(shown) : shown), [grouped, shown]);
+  const expanded = useMemo(
+    () =>
+      Object.fromEntries(
+        tableRows.flatMap((row) =>
+          row.group && !folded.has(row.group.key) ? [[rowId(row), true]] : [],
+        ),
+      ),
+    [tableRows, folded],
   );
   const chartPoints = useMemo(() => jobPoints(shown), [shown]);
   const hasUsage = useMemo(() => shown.some((job) => job.usage), [shown]);
@@ -276,6 +346,19 @@ export const JobList = memo(function JobList({ report: first }: { report: JobsRe
           aria-label="Search jobs"
           className="h-8 w-48"
         />
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-pressed={!flat}
+          className={cn("ml-auto", flat && "text-muted-foreground")}
+          onClick={() => {
+            saveFlag(FLAT_KEY, !flat);
+            setFlat(!flat);
+          }}
+        >
+          <GitPullRequestIcon aria-hidden />
+          Group by pull request
+        </Button>
       </div>
       {report.jobs.length === 0 ? (
         <p className="rounded-xl border bg-card px-4 py-6 text-sm text-muted-foreground">
@@ -291,8 +374,23 @@ export const JobList = memo(function JobList({ report: first }: { report: JobsRe
             <ListContext value={context}>
               <DataTable
                 columns={hasUsage ? columnsWithUsage : columns}
-                data={shown}
-                getRowId={(job) => String(job.id)}
+                data={tableRows}
+                getRowId={rowId}
+                getSubRows={(row) => row.subRows}
+                expanded={grouped ? expanded : undefined}
+                rowClassName={groupedRowClass}
+                fullRow={(row) => {
+                  const group = row.group;
+                  return (
+                    group && (
+                      <BranchHeading
+                        group={group}
+                        open={!folded.has(group.key)}
+                        onToggle={() => setFolded((keys) => toggleKey(keys, group.key))}
+                      />
+                    )
+                  );
+                }}
                 search={query.trim()}
                 rowHeight={53}
                 empty="No jobs match these filters."
