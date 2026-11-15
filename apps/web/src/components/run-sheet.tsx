@@ -2,6 +2,7 @@ import { Link, type LinkProps, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { CommitBy } from "@/components/commit";
+import { JobFailureSection } from "@/components/job-failure";
 import { RunnerLink, type RunnerRef } from "@/components/runner-link";
 import { StatusIcon } from "@/components/status-icon";
 import { WalkLines } from "@/components/walk-lines";
@@ -443,6 +444,7 @@ function JobView({
   );
 
   const wait = waitOf(job, now);
+  const logUrl = jobUrl({ ...header, runId: ids.runId, id: job.id });
   const workflow = header.workflow ?? "Unnamed workflow";
   const performance = {
     view: "jobs" as const,
@@ -498,6 +500,10 @@ function JobView({
         ]}
       />
 
+      {isFailure(job.conclusion) && (
+        <JobFailureSection key={job.id} jobId={job.id} logUrl={logUrl} />
+      )}
+
       <section className="grid gap-2">
         <h3 className="text-sm font-medium">Steps</h3>
         {failed ? (
@@ -516,9 +522,7 @@ function JobView({
       </section>
 
       <Links>
-        <ExternalLink href={jobUrl({ ...header, runId: ids.runId, id: job.id })}>
-          Open on GitHub
-        </ExternalLink>
+        <ExternalLink href={logUrl}>Open on GitHub</ExternalLink>
         <Link to="/performance" search={performance} className={LINK}>
           Usual times for this job
           <ChevronRightIcon aria-hidden className="size-3.5" />
