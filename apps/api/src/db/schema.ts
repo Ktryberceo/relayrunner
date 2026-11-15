@@ -464,6 +464,11 @@ export const jobTiming = sqliteTable(
     // The CPU and memory it used, as its connected machine reported when the job ended. Only
     // machines whose CLI samples report it.
     usage: text("usage", { mode: "json" }).$type<JobUsage>(),
+    // From the `completed` webhook's steps: whether any of the job's own steps started (false
+    // when the runner never got past "Set up job"), and the first step that failed. Null when
+    // GitHub sent no steps, or none failed.
+    ranSteps: integer("ran_steps", { mode: "boolean" }),
+    failedStep: text("failed_step"),
     ...timestamps,
   },
   (table) => [
@@ -575,6 +580,80 @@ export const jobCountDay = sqliteTable(
     ...jobCounters,
   },
   (table) => [primaryKey({ columns: [table.day, table.installationId] })],
+);
+
+// How long jobs waited for a hosted runner to take them, per UTC day, runner and installation,
+// counted once when job_timing first records a job finished (src/runner-waits.ts). Kept past
+// job_timing's raw retention so a public comparison of runners (#492) can later report medians
+// and the share started within a minute over any range, and only show a runner once enough
+// installations used it. Holds no repo, workflow or label text: a runner is its provider, platform
+// and vCPUs. Goes away with its installation.
+export const WAIT_BUCKETS = {
+  under10s: 10_000,
+  under30s: 30_000,
+  under1m: 60_000,
+  under2m: 120_000,
+  under5m: 300_000,
+  under15m: 900_000,
+  over15m: Infinity,
+} as const;
+const waitBuckets = {
+  under10s: integer("under_10s").notNull().default(0),
+  under30s: integer("under_30s").notNull().default(0),
+  under1m: integer("under_1m").notNull().default(0),
+  under2m: integer("under_2m").notNull().default(0),
+  under5m: integer("under_5m").notNull().default(0),
+  under15m: integer("under_15m").notNull().default(0),
+  over15m: integer("over_15m").notNull().default(0),
+} satisfies Record<keyof typeof WAIT_BUCKETS, unknown>;
+
+export const runnerWaitDay = sqliteTable(
+  "runner_wait_day",
+  {
+    day: integer("day", { mode: "timestamp_ms" }).notNull(),
+    // `github` or a hosted provider's id.
+    provider: text("provider").notNull(),
+    // linux, arm, windows, windows-arm, macos, or other.
+    platform: text("platform").notNull(),
+    // 0 when the label doesn't say.
+    vcpus: integer("vcpus").notNull(),
+    installationId: integer("installation_id")
+      .notNull()
+      .references(() => githubInstallation.id, { onDelete: "cascade" }),
+    jobs: integer("jobs").notNull().default(0),
+    waitMs: integer("wait_ms").notNull().default(0),
+    // Jobs per wait bucket, each column the jobs that waited under its time (and at least the
+    // previous one's), so medians and percentiles can be read for any range without single jobs.
+    ...waitBuckets,
+    // Jobs whose runner failed them before any step ran.
+    runnerFailures: integer("runner_failures").notNull().default(0),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.day, table.provider, table.platform, table.vcpus, table.installationId],
+    }),
+    // The cascade when an installation is removed; reads go by day.
+    index("runner_wait_day_installation_idx").on(table.installationId),
+  ],
+);
+
+// What each GitHub account spent on each priced hosted provider per UTC calendar month, at list
+// prices, counted once when job_timing first records a job finished (src/provider-spend.ts). A
+// hosted step with a spend limit reads its row when it's reached, so the check is one key lookup.
+export const providerSpendMonth = sqliteTable(
+  "provider_spend_month",
+  {
+    installationId: integer("installation_id")
+      .notNull()
+      .references(() => githubInstallation.id, { onDelete: "cascade" }),
+    // The UTC midnight starting the month.
+    month: integer("month", { mode: "timestamp_ms" }).notNull(),
+    provider: text("provider").notNull(),
+    // Millionths of a dollar, so sums of per-minute prices stay whole numbers.
+    usdMicros: integer("usd_micros").notNull().default(0),
+    jobs: integer("jobs").notNull().default(0),
+  },
+  (table) => [primaryKey({ columns: [table.installationId, table.month, table.provider] })],
 );
 
 // One attempt of a GitHub Actions workflow run in a connected repo, from workflow_run webhooks
