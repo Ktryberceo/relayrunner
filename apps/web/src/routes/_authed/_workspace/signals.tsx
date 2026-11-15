@@ -33,6 +33,7 @@ import {
   triggerName,
 } from "@/lib/signals";
 import {
+  dayRanges,
   optionParam,
   rangeParam,
   unlessDefault,
@@ -42,7 +43,7 @@ import {
 import { money } from "@/lib/usage";
 import { count } from "@/lib/utils";
 
-const RANGES = [7, 30, 90] as const;
+const RANGES = dayRanges(7, 90);
 
 function load(days: number): Promise<SignalsReport> {
   return authDisabled ? Promise.resolve(sampleSignals(days)) : getSignals(days);
