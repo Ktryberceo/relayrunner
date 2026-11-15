@@ -8,6 +8,7 @@ import { addedRunnerScope, matchLabels, parseStoredLabels } from "./github-runne
 import { type Device, isNewerVersion } from "@relayrunner/machine-protocol";
 // The CLI on main is the one npm has: the Release workflow publishes it when its version lands.
 import cliPackage from "../../cli/package.json" with { type: "json" };
+import { type RunnerRelease, runnerUpdate } from "./runner-releases.ts";
 import type { MachineSharing } from "@relayrunner/activity";
 import { isolatedLabels, machineLabels } from "./routing.ts";
 
@@ -452,6 +453,17 @@ export function presentMachine(machine: Machine, pausedBy: string | null = null)
 }
 
 /**
+ * The actions/runner version from the machine's last hello, the newer release, and when GitHub may
+ * stop sending it jobs (runner-releases.ts). Null for a runner added from GitHub, which doesn't
+ * say. The lists the Runners page reads add it to presentMachine, as they add status.
+ */
+export function presentRunner(machine: Machine, releases: RunnerRelease[]) {
+  return machine.runnerVersion
+    ? { version: machine.runnerVersion, ...runnerUpdate(machine.runnerVersion, releases) }
+    : null;
+}
+
+/**
  * The machine columns a hello's device sets. Every column is written, so a part the CLI no
  * longer reports is cleared rather than left stale.
  */
@@ -471,7 +483,8 @@ export function deviceColumns(device: Device, now: Date) {
 /**
  * The machine columns a hello sets. The OS and architecture are where the machine's jobs run,
  * which can change between connections: a Mac running `connect --isolated` takes Linux jobs. The
- * CLI version changes whenever its owner updates it.
+ * CLI version changes whenever its owner updates it, and the runner version whenever `connect`
+ * restarts after a new actions/runner release.
  */
 export function helloColumns(
   hello: {
@@ -480,6 +493,7 @@ export function helloColumns(
     isolated?: { os: string; arch: string };
     vm?: { cpus: number; memoryGb: number };
     cliVersion?: string;
+    runnerVersion?: string;
     device?: Device;
   },
   now: Date,
@@ -492,6 +506,7 @@ export function helloColumns(
     vmCpus: hello.vm?.cpus ?? null,
     vmMemoryGb: hello.vm?.memoryGb ?? null,
     cliVersion: hello.cliVersion ?? null,
+    runnerVersion: hello.runnerVersion ?? null,
     ...(hello.device ? deviceColumns(hello.device, now) : {}),
   };
 }
