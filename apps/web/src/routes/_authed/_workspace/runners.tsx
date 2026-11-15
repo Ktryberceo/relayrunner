@@ -41,6 +41,7 @@ import {
   machineView,
 } from "@/components/runner-card";
 import { RunnerList, type RunnerRow } from "@/components/runner-list";
+import { NeedsAttention } from "@/components/runner-attention";
 import { RunnersNow } from "@/components/runners-now";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,6 +54,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { attentionItems } from "@/lib/attention";
 import { authDisabled } from "@/lib/auth-client";
 import {
   getJobTimes,
@@ -152,6 +154,8 @@ function RunnersPage() {
   // The jobs running and queued right now, for the top of the page.
   const [live, setLive] = useState(loaded.live);
   useEffect(() => setLive(loaded.live), [loaded.live]);
+  // When the machines last came back, for the freshness line and greying out stale numbers.
+
   // Each keeps showing its last answer when a refresh fails; the next tick retries.
   const refreshMachines = () =>
     listMachines()
@@ -169,6 +173,11 @@ function RunnersPage() {
     () => Promise.all([refreshMachines(), allMachines.length ? refreshLive() : null]),
     { intervalMs: REFRESH_MS, enabled: !authDisabled },
   );
+
+  // When the machines last came back, for the freshness line and greying out stale numbers.
+  const [updatedAt, setUpdatedAt] = useState(Date.now);
+  useEffect(() => setUpdatedAt(Date.now()), [allMachines]);
+  const attention = useMemo(() => attentionItems(allMachines, live), [allMachines, live]);
 
   const editable = canManage(current.role);
   const [showSpecs, setShowSpecs] = useState(() => readFlag(SHOW_SPECS_KEY));
@@ -365,7 +374,20 @@ function RunnersPage() {
               onDismiss={dismissOthers}
             />
           )}
-          {!empty && <RunnersNow machines={allMachines} live={live} />}
+          {!empty && (
+            <RunnersNow
+              machines={allMachines}
+              live={live}
+              updatedAt={updatedAt}
+              attention={
+                <NeedsAttention
+                  items={attention}
+                  onAddRunner={editable ? () => setGithubOpen(true) : undefined}
+                  onChanged={refreshMachines}
+                />
+              }
+            />
+          )}
           {empty ? (
             <RunnerGroup title="Self-hosted" bare>
               <ConnectLanding
