@@ -1,6 +1,6 @@
 ---
 title: Hosted providers
-description: Routing jobs to Blacksmith, Depot, Namespace, WarpBuild, Ubicloud and RunsOn.
+description: Routing jobs to Blacksmith, Depot, Namespace, WarpBuild, Ubicloud, RunsOn and Boat.
 ---
 
 import Provider from "@/components/docs/Provider.astro";
@@ -40,6 +40,7 @@ Unlike machines, hosted providers also run public repos' jobs.
 | WarpBuild  | `warpbuild`  |
 | Ubicloud   | `ubicloud`   |
 | RunsOn     | `runs-on`    |
+| Boat       | `boat`       |
 
 <Provider id="blacksmith" />
 
@@ -53,7 +54,11 @@ Unlike machines, hosted providers also run public repos' jobs.
 
 <Provider id="runs-on" />
 
+<Provider id="boat" />
+
 RunsOn's label carries the run's id, so write it as an expression: `runs-on: runs-on=${{ github.run_id }}/runner=2cpu-linux-x64`.
+
+Boat needs its $20 plan or higher, and its jobs run on Linux x64 only. Its sizes are `boat-small` (2 vCPU), `boat` (4 vCPU), `boat-large` (8 vCPU) and `boat-xlarge` (16 vCPU, on its $100 plan or higher). Boat's options after a slash, such as `boat-large/debug`, pass through as written. Boat also charges for job starts above the number its plan includes, and RelayRunner's cost estimates leave that out.
 
 ## Good to know
 

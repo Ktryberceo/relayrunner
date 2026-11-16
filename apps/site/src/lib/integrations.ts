@@ -34,6 +34,7 @@ const INTROS: Record<IntegrationId, string> = {
     "WarpBuild runs GitHub Actions jobs on its own machines, under your WarpBuild account.",
   ubicloud: "Ubicloud runs GitHub Actions jobs on its own machines, under your Ubicloud account.",
   "runs-on": "RunsOn starts a runner for each job in your own AWS account.",
+  boat: "Boat runs each GitHub Actions job in a fresh Linux virtual machine, under your Boat account.",
   github: "GitHub-hosted runners work in every repository with nothing to set up.",
 };
 

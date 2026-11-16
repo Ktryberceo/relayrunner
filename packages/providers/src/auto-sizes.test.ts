@@ -11,6 +11,10 @@ describe("labelForSize", () => {
     ["ubicloud", 32, null],
     ["ubicloud", 16, "ubicloud-standard-16"],
     ["runs-on", 4, "runs-on=7/runner=4cpu-linux-x64"],
+    ["boat", 2, "boat-small"],
+    ["boat", 3, "boat"],
+    ["boat", 16, "boat-xlarge"],
+    ["boat", 32, null],
     ["github", 2, "ubuntu-latest"],
     ["github", 1, "ubuntu-slim"],
     ["github", 4, null],
@@ -23,7 +27,7 @@ describe("labelForSize", () => {
     expect(labelForSize("ubicloud", 20, 1)).toBe("ubicloud-standard-30");
   });
 
-  test.each(["blacksmith", "depot", "warpbuild", "ubicloud", "namespace"])(
+  test.each(["blacksmith", "depot", "warpbuild", "ubicloud", "namespace", "boat"])(
     "%s labels read back as the size they ask for",
     (provider) => {
       for (const vcpus of [2, 4, 8, 16]) {

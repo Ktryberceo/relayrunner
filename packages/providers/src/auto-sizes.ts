@@ -38,6 +38,10 @@ const LABELS: Partial<
     sizes: [2, 4, 8, 16, 32, 64],
     label: (n, runId) => `runs-on=${runId}/runner=${n}cpu-linux-x64`,
   },
+  boat: {
+    sizes: [2, 4, 8, 16],
+    label: (n) => ({ 2: "boat-small", 4: "boat", 8: "boat-large" })[n] ?? "boat-xlarge",
+  },
   // GitHub's standard runners. Bigger ones are larger runners each org names itself.
   github: {
     sizes: [1, 2],

@@ -10,6 +10,7 @@ export const PROVIDER_IDS = [
   "warpbuild",
   "ubicloud",
   "runs-on",
+  "boat",
   "github",
   "cloudflare",
   "other",
@@ -85,6 +86,16 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
     setup: "Deploy RunsOn into your AWS account and install the GitHub App it creates.",
     docsUrl: "https://runs-on.com/docs/",
   },
+  boat: {
+    name: "Boat",
+    summary: "Linux virtual machines for GitHub Actions, billed per second.",
+    labels: "boat, boat-*",
+    example: "boat",
+    setup:
+      "Start a Boat plan of $20 a month or more and install the Boat CI GitHub App on your organization.",
+    dashboardUrl: "https://boat.dev/dashboard",
+    docsUrl: "https://docs.boat.dev/ci",
+  },
   github: {
     name: "GitHub",
     summary: "GitHub's own hosted runners, billed per minute in private repos.",
@@ -124,12 +135,14 @@ export const HOSTED_PROVIDER_IDS = [
   "warpbuild",
   "ubicloud",
   "runs-on",
+  "boat",
 ] as const satisfies readonly ProviderId[];
 
 export type HostedProviderId = (typeof HOSTED_PROVIDER_IDS)[number];
 
 // How each service's labels start, e.g. `depot-ubuntu-24.04-8`. A prefix ending in `-` also
 // matches the bare name (`ubicloud`). RunsOn's carry the run id, `runs-on=<run id>/runner=...`.
+// Boat's can add options after a slash, such as `boat-large/debug` or `boat/from=ci-base`.
 export const LABEL_PREFIXES: Record<HostedProviderId, string[]> = {
   blacksmith: ["blacksmith-"],
   depot: ["depot-"],
@@ -137,6 +150,7 @@ export const LABEL_PREFIXES: Record<HostedProviderId, string[]> = {
   warpbuild: ["warp-"],
   ubicloud: ["ubicloud-"],
   "runs-on": ["runs-on=", "runs-on/"],
+  boat: ["boat-", "boat/"],
 };
 
 /** Whether a lowercase label starts with one of `prefixes`, or is the bare name one ends in `-`. */
@@ -167,6 +181,7 @@ export const APP_SLUG_PATTERNS: Record<HostedProviderId, RegExp> = {
   warpbuild: /warpbuild/,
   ubicloud: /ubicloud/,
   "runs-on": /runs-?on/,
+  boat: /(^|-)boat(-|$)/,
 };
 
 /** The hosted providers whose GitHub App is among these installed app slugs. */

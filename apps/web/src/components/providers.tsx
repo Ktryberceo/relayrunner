@@ -3,6 +3,7 @@ import { type ProviderId, providerOfEnvironment, sizeText } from "@relayrunner/p
 import type { ReactNode } from "react";
 import {
   BlacksmithIcon,
+  BoatIcon,
   CloudflareIcon,
   DepotIcon,
   GithubIcon,
@@ -87,6 +88,14 @@ const LOOKS: Record<ProviderId | "machine", ProviderLook> = {
     tile: "bg-[#101010] text-runson",
     tint: "bg-runson/8",
     bar: "bg-runson",
+    mono: true,
+  },
+  boat: {
+    icon: <BoatIcon className="w-3.5" />,
+    tile: "bg-boat text-white",
+    tint: "bg-boat/8",
+    bar: "bg-boat",
+    prefix: /^boat-/,
     mono: true,
   },
   github: {

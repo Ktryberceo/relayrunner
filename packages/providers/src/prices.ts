@@ -18,6 +18,8 @@ export const RATES = {
   depot: { linux: "vcpu", arm: "vcpu", windows: "vcpu", macos: "vcpu" },
   warpbuild: { linux: "vcpu", arm: "vcpu", windows: "vcpu", macos: "vcpu" },
   ubicloud: { standard: "vcpu", premium: "vcpu" },
+  // One price per size, named by its label: Boat's xlarge costs more per vCPU than the others.
+  boat: { "boat-small": "runner", boat: "runner", "boat-large": "runner", "boat-xlarge": "runner" },
   github: {
     "linux-1-core": "runner",
     "linux-2-core": "runner",
@@ -77,6 +79,7 @@ export interface PriceRow {
 }
 
 const vcpu = (perRunner: number, vcpus: number) => perRunner / vcpus;
+const hourly = (perHour: number) => perHour / 60;
 
 export const BASE_PRICES: PriceRow[] = [
   // Blacksmith: $0.004 x64, $0.0025 Arm, $0.008 Windows per 2 vCPU, $0.08 per 6 vCPU macOS.
@@ -104,6 +107,13 @@ export const BASE_PRICES: PriceRow[] = [
   { provider: "ubicloud", rate: "standard", usd: vcpu(0.00125, 2), from: "2026-09-01" },
   { provider: "ubicloud", rate: "premium", usd: vcpu(0.0016, 2), from: "2025-05-01" },
   { provider: "ubicloud", rate: "premium", usd: vcpu(0.002, 2), from: "2026-09-01" },
+  // Boat, billed per second: $0.018, $0.036, $0.072 and $0.200 an hour for 2, 4, 8 and 16 vCPU.
+  // Starts above a plan's included number cost extra, which this leaves out.
+  // https://docs.boat.dev/pricing
+  { provider: "boat", rate: "boat-small", usd: hourly(0.018), from: "2026-11-16" },
+  { provider: "boat", rate: "boat", usd: hourly(0.036), from: "2026-11-16" },
+  { provider: "boat", rate: "boat-large", usd: hourly(0.072), from: "2026-11-16" },
+  { provider: "boat", rate: "boat-xlarge", usd: hourly(0.2), from: "2026-11-16" },
   // GitHub, in a private repo; standard runners are free in public ones.
   // https://docs.github.com/en/billing/reference/actions-runner-pricing
   { provider: "github", rate: "linux-1-core", usd: 0.002, from: "2026-11-11" },
@@ -263,6 +273,11 @@ function rateOf(provider: ProviderId, label: string): { rate: string; vcpus: num
         rate: label.includes("premium") ? "premium" : "standard",
         vcpus: vcpusIn(label, /-(?:standard|premium)-(\d+)/, 2),
       };
+    // boat, boat-small, boat-large/debug, boat-xlarge/from=ci-base
+    case "boat": {
+      const size = BOAT_SIZES[label.split("/")[0]!];
+      return size ? { rate: label.split("/")[0]!, vcpus: size.vcpus } : null;
+    }
     default:
       return null;
   }
@@ -283,7 +298,9 @@ export function listRate(
   const sized = rateOf(provider, label);
   if (!sized) return null;
   const usd = book.usd(provider, sized.rate, at);
-  return usd === null ? null : usd * sized.vcpus;
+  if (usd === null) return null;
+  const per = (RATES as Record<string, Record<string, string>>)[provider]?.[sized.rate];
+  return per === "runner" ? usd : usd * sized.vcpus;
 }
 
 /** How big a runner is: its vCPUs, and its memory when the label or the service says. */
@@ -310,6 +327,14 @@ const CLOUDFLARE_SIZES: Partial<Record<string, RunnerSize>> = {
   "standard-4": { vcpus: 4, memoryGb: 12 },
 };
 
+// Boat's sizes, by the runs-on label that asks for each. https://docs.boat.dev/ci
+const BOAT_SIZES: Partial<Record<string, RunnerSize>> = {
+  "boat-small": { vcpus: 2, memoryGb: 4 },
+  boat: { vcpus: 4, memoryGb: 8 },
+  "boat-large": { vcpus: 8, memoryGb: 16 },
+  "boat-xlarge": { vcpus: 16, memoryGb: 32 },
+};
+
 // A size written into a label its owner named, such as `ubuntu-24.04-16core` or `linux-8-cores`.
 const NAMED_SIZE = /(?:^|[-_.])(\d{1,3})-?(?:v?cpus?|cores?)(?=$|[-_.])/;
 
@@ -330,6 +355,8 @@ export function runnerSize(provider: string, label: string): RunnerSize | null {
       const match = /-(\d+)x(\d+)$/.exec(label);
       return match ? { vcpus: Number(match[1]), memoryGb: Number(match[2]) } : null;
     }
+    case "boat":
+      return BOAT_SIZES[label.split("/")[0]!] ?? null;
     // The runner= part of its labels, such as 2cpu-linux-x64.
     case "runs-on": {
       const vcpus = count(/^(\d+)cpu-/.exec(label));

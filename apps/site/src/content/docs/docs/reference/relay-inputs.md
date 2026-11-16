@@ -34,6 +34,7 @@ Any input can say `auto` instead of a label. The Router then picks that provider
 | `warpbuild`  | none    | One WarpBuild label, such as `warp-ubuntu-latest-x64-2x`.                                                                                                                                                    |
 | `ubicloud`   | none    | One Ubicloud label, such as `ubicloud-standard-2`.                                                                                                                                                           |
 | `runs-on`    | none    | One RunsOn label, such as `runs-on=${{ github.run_id }}/runner=2cpu-linux-x64`.                                                                                                                              |
+| `boat`       | none    | One Boat label, such as `boat` or `boat-large`.                                                                                                                                                              |
 
 ## Auto sizes
 

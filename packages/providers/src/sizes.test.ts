@@ -14,6 +14,9 @@ describe("runnerSize", () => {
     ["ubicloud", "ubicloud-standard-8-arm", "8 vCPU"],
     ["ubicloud", "ubicloud-premium-4-ubuntu-2404", "4 vCPU"],
     ["namespace", "nscloud-ubuntu-22.04-amd64-4x16", "4 vCPU · 16 GB"],
+    ["boat", "boat", "4 vCPU · 8 GB"],
+    ["boat", "boat-small", "2 vCPU · 4 GB"],
+    ["boat", "boat-xlarge/debug", "16 vCPU · 32 GB"],
     ["runs-on", "2cpu-linux-x64", "2 vCPU"],
     ["github", "linux-2-core", "2 vCPU · 8 GB"],
     ["github", "linux-1-core", "1 vCPU · 5 GB"],
@@ -31,6 +34,7 @@ describe("runnerSize", () => {
     ["github", "macos"],
     ["github", "ubuntu-latest-large"],
     ["ubicloud", "ubicloud-gpu"],
+    ["boat", "boat-huge"],
     ["other", "my-runner"],
     ["other", "ubuntu-2404"],
   ])("%s %s has no known size", (provider, label) => {

@@ -20,6 +20,10 @@ describe("hosted provider labels", () => {
     ["nscloud-ubuntu-22.04-amd64-4x8", "namespace"],
     ["ubicloud", "ubicloud"],
     ["runs-on/runner=2cpu-linux-x64", "runs-on"],
+    ["boat", "boat"],
+    ["boat-large/from=ci-base/debug", "boat"],
+    ["boat/debug", "boat"],
+    ["boatyard", null],
     ["ubuntu-latest", null],
     ["self-hosted", null],
   ])("%s belongs to %s", (label, id) => {
@@ -35,8 +39,8 @@ describe("hosted provider labels", () => {
 describe("provider GitHub Apps", () => {
   test("installed app slugs map to their providers", () => {
     expect(
-      providersOfAppSlugs(["blacksmith-sh", "Depot", "runs-on-acme", "relayrunner", "claude"]),
-    ).toEqual(["blacksmith", "depot", "runs-on"]);
+      providersOfAppSlugs(["blacksmith-sh", "Depot", "runs-on-acme", "boat-ci", "relayrunner"]),
+    ).toEqual(["blacksmith", "depot", "runs-on", "boat"]);
   });
 
   test("no provider apps, no providers", () => {

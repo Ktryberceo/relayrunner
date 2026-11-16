@@ -138,6 +138,22 @@ export const PRICE_SOURCES: PriceSource[] = [
     },
   },
   {
+    provider: "boat",
+    url: "https://docs.boat.dev/pricing.md",
+    page: "https://docs.boat.dev/pricing",
+    // The sizes table: size, price an hour, CPU, RAM, disk. Each size is its own runs-on label.
+    parse(md) {
+      const size = (rate: string, name: string) =>
+        found(rate, priceCell(tableRow(md, runnerIs(name))) / 60);
+      return [
+        size("boat-small", "small"),
+        size("boat", "default"),
+        size("boat-large", "large"),
+        size("boat-xlarge", "xlarge"),
+      ];
+    },
+  },
+  {
     provider: "github",
     url: "https://docs.github.com/api/article/body?pathname=/en/billing/reference/actions-runner-pricing",
     page: "https://docs.github.com/en/billing/reference/actions-runner-pricing",
