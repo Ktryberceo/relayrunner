@@ -484,6 +484,13 @@
       "when": 1794835066658,
       "tag": "20261116131746_user_time_zone",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "6",
+      "when": 1794837566406,
+      "tag": "20261116135926_auto_jobs",
+      "breakpoints": true
     }
   ]
 }
