@@ -20,12 +20,25 @@
   <string>__VERSION__</string>
   <key>CFBundleVersion</key>
   <string>__VERSION__</string>
+  <!-- The bundled relayrunner CLI's version, shown in the About tab. -->
+  <key>RRCLIVersion</key>
+  <string>__CLI_VERSION__</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <!-- A menu bar app: no Dock icon or app menu. -->
   <key>LSUIElement</key>
   <true/>
   <key>NSHighResolutionCapable</key>
+  <true/>
+  <!-- Updates (Sparkle): scripts/release.sh publishes the feed and signs each update with the
+       private half of this key, which lives in the releasing Mac's keychain. -->
+  <key>SUFeedURL</key>
+  <string>https://relayrunner.app/mac/appcast.xml</string>
+  <key>SUPublicEDKey</key>
+  <string>Su8dbde8agaYdpte8/A5y8r/UC5z9OjtO61S85gXIrc=</string>
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
+  <key>SUVerifyUpdateBeforeExtraction</key>
   <true/>
 </dict>
 </plist>

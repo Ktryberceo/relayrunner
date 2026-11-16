@@ -25,6 +25,30 @@ tests. To try changes to the CLI without rebuilding the app, point it at another
 `RELAYRUNNER_CLI=/path/to/relayrunner open apps/mac/dist/RelayRunner.app` (or run
 `.build/release/RelayRunner` with that variable set).
 
+## Release
+
+The app has its own version, in `package.json`. A PR that changes the app adds a changeset naming
+`"@relayrunner/mac"`, and the `chore: version packages` PR bumps it. After that merges, release from
+main on a Mac:
+
+```sh
+apps/mac/scripts/release.sh --dry-run   # build, sign and notarize into apps/mac/dist
+apps/mac/scripts/release.sh             # and publish
+```
+
+It signs every part with the Developer ID certificate in the keychain, notarizes and staples the
+app and a DMG, and signs a zip for Sparkle. It bundles the CLI from the same commit, whose version
+the About tab shows. Publishing makes a `mac-v<version>` GitHub release with the DMG and zip, bumps the cask in [relayrunner/homebrew-tap](https://github.com/relayrunner/homebrew-tap)
+(`brew install --cask relayrunner/tap/relayrunner`), and opens a PR with the new
+`apps/site/public/mac/appcast.xml`. Installed apps check that feed about once a day and offer the
+update once the PR merges and the site deploys.
+
+The keychain needs a Developer ID Application certificate, a notarytool profile named
+`relayrunner` (`xcrun notarytool store-credentials relayrunner`), and Sparkle's private key. The
+key was made once with `generate_keys` from `scripts/setup-sparkle.sh`'s folder; its public half is
+`SUPublicEDKey` in `Info.plist`. Losing the private key means existing installs can't update, so
+keep a copy (`generate_keys -x <file>` exports it).
+
 ## How it works
 
 The app starts `relayrunner connect --events` in its own process group and reads one JSON event
