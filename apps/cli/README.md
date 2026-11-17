@@ -248,6 +248,19 @@ that name.
 
 ## Building
 
-`pnpm --filter relayrunner build` bundles the CLI into `dist/cli.js` with
-tsdown, including the workspace's `@relayrunner/machine-protocol` package.
+The CLI is written in Rust. npm ships it as `relayrunner`, which holds only
+`bin/relayrunner.js`, plus one `@relayrunner/cli-<os>-<cpu>` package per
+platform with the binary (`scripts/npm-packages.mjs` makes them). The Mac app
+bundles the same binary. Its version is `package.json`'s.
+
+```sh
+cargo test
+cargo build --release   # target/release/relayrunner
+cargo run -- --help     # or `pnpm relayrunner --help` from the repo root
+```
+
+The messages it exchanges with the gateway are checked against
+`packages/machine-protocol/fixtures.json`, which the protocol package's tests
+check too. `init` edits workflow files line by line rather than reprinting
+them, so everything it doesn't add or change stays as written.
 Releases go out through changesets; see [.changeset/README.md](../../.changeset/README.md).
