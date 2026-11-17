@@ -36,6 +36,15 @@ describe("provider catalog", () => {
     expect(blacksmith).toMatchObject({ name: "Acme", prefixes: ["blacksmith-"], builtIn: true });
   });
 
+  test("listed runner clouds match their labels, live and not featured", () => {
+    const of = (label: string) => catalogProviderOf(BASE_CATALOG, [label])?.id;
+    expect(of("starsling-ubuntu-24.04-2")).toBe("starsling");
+    expect(of("celesto")).toBe("celesto");
+    expect(of("berrybox-2vcpu-ubuntu-2404")).toBe("berrybox");
+    const berrybox = BASE_CATALOG.find((p) => p.id === "berrybox")!;
+    expect(berrybox).toMatchObject({ status: "live", featured: false, prefixes: ["berrybox-"] });
+  });
+
   test("an Off provider matches nothing, and a provider in code can only be hidden", () => {
     const catalog = providerCatalog([
       { ...row, status: "off" },
