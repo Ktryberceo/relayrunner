@@ -21,12 +21,19 @@ struct RelayRunnerApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+  // Before launch finishes, so clicking a notification that opened the app still works.
+  func applicationWillFinishLaunching(_ notification: Notification) {
+    Notifications.shared.start()
+  }
+
   func applicationDidFinishLaunching(_ notification: Notification) {
     // A command written after `connect` exits would otherwise end the app.
     signal(SIGPIPE, SIG_IGN)
     MainActor.assumeIsolated {
       Updates.shared.start()
-      Connection.shared.resumeIfWanted()
+      // A welcome opened for development (RELAYRUNNER_WELCOME) leaves this Mac's connection alone.
+      if ProcessInfo.processInfo.environment["RELAYRUNNER_WELCOME"] == nil { Connection.shared.resumeIfWanted() }
+      Welcome.shared.showIfNew()
     }
   }
 
