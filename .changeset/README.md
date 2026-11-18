@@ -44,8 +44,9 @@ through Workers Builds, so they never get a changeset. `pnpm changeset:lint`
    can't, because it has to be signed and notarized. On a Mac whose keychain
    holds the release credentials (a Developer ID Application certificate, a
    notarytool profile and Sparkle's private key; see
-   [apps/mac/README.md](../apps/mac/README.md#release)), check out that commit
-   of `main` with a clean tree and run `apps/mac/scripts/release.sh`. It makes
+   [apps/mac/README.md](../apps/mac/README.md#release)), run
+   `pnpm release:mac:dry-run`, then `pnpm release:mac`. They release the
+   latest `main` from a separate worktree. Publishing makes
    the `mac-v<version>` GitHub release, bumps the Homebrew cask and opens a
    `chore(mac): release RelayRunner for Mac <version>` PR with the new appcast.
 5. Merge the appcast PR. Installed apps offer the update once the site deploys.

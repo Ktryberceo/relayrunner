@@ -35,6 +35,8 @@
     "screenshots": "node scripts/screenshots.mjs",
     "changeset": "changeset",
     "changeset:lint": "node scripts/changeset-lint.mjs",
+    "release:mac": "bash apps/mac/scripts/release-from-main.sh",
+    "release:mac:dry-run": "bash apps/mac/scripts/release-from-main.sh --dry-run",
     "changeset:version": "changeset version && oxfmt apps/cli/package.json apps/cli/CHANGELOG.md apps/mac/package.json apps/mac/CHANGELOG.md --no-error-on-unmatched-pattern"
   },
   "type": "module",
