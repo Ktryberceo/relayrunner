@@ -7,8 +7,8 @@ final class EventTests: XCTestCase {
 
   func testParsesTheEventsTheAppUses() {
     XCTAssertEqual(
-      parse(#"{"v":1,"at":"2026-11-16T18:16:23.281Z","type":"machine","id":"m1","name":"M3P0","server":"https://app.relayrunner.app"}"#),
-      .machine(id: "m1", name: "M3P0", server: URL(string: "https://app.relayrunner.app")!)
+      parse(#"{"v":1,"at":"2026-11-16T18:16:23.281Z","type":"machine","id":"m1","name":"M3P0","server":"https://app.relayrunner.dev"}"#),
+      .machine(id: "m1", name: "M3P0", server: URL(string: "https://app.relayrunner.dev")!)
     )
     XCTAssertEqual(
       parse(#"{"v":1,"at":"x","type":"state","link":"online","paused":true,"jobs":["r1"]}"#),
@@ -28,8 +28,8 @@ final class EventTests: XCTestCase {
           queue: [QueuedJob(repo: "acme/app", since: 1_763_481_600_000)], spilled: [1_763_481_000_000], slots: 2))
     )
     XCTAssertEqual(
-      parse(#"{"v":1,"at":"x","type":"sign-in","url":"https://app.relayrunner.app/device?user_code=AB","code":"AB"}"#),
-      .signIn(url: URL(string: "https://app.relayrunner.app/device?user_code=AB")!, code: "AB")
+      parse(#"{"v":1,"at":"x","type":"sign-in","url":"https://app.relayrunner.dev/device?user_code=AB","code":"AB"}"#),
+      .signIn(url: URL(string: "https://app.relayrunner.dev/device?user_code=AB")!, code: "AB")
     )
     XCTAssertEqual(
       parse(#"{"v":1,"at":"x","type":"job-repo","routeId":"r1","repo":"acme/api"}"#),
