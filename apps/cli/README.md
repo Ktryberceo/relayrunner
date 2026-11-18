@@ -210,6 +210,32 @@ Runners page, and a running `relayrunner connect` prints when that happens.
 In the terminal running `relayrunner connect`, `p` does the same.
 Both exit 1 when not signed in or when the token is no longer valid.
 
+## `relayrunner history`
+
+```sh
+npx relayrunner history              # the last 20 jobs this machine ran
+npx relayrunner history --limit 50
+npx relayrunner history --json
+```
+
+Lists the jobs `relayrunner connect` ran on this machine, newest first, with
+each one's result and how long it took. They're kept in
+`~/.relayrunner/history.jsonl`, which RelayRunner for Mac reads too.
+
+## `relayrunner jobs`
+
+```sh
+npx relayrunner jobs                 # the jobs this machine ran in the last week
+npx relayrunner jobs --before <ms>   # the page after, from the last page's hint
+npx relayrunner jobs 123456789       # one job's steps and, if it failed, why
+npx relayrunner jobs --json
+```
+
+Unlike `history`, which reads this computer's own file, `jobs` asks the
+gateway, so it shows GitHub's steps for each job and, for a failed one, the
+failed step, its annotations and the end of its log. A machine only sees jobs
+that ran on it. RelayRunner for Mac's Jobs window reads the same.
+
 ## `relayrunner share`
 
 ```sh
