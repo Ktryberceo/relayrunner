@@ -101,25 +101,26 @@ pnpm dev                          # http://localhost:8787/api/health
 
 ## Deploy
 
-`wrangler.jsonc` pins the RelayRunner Cloudflare account (`account_id`), so wrangler targets it even if your login can see other accounts. Then:
+Deploys still go through Wrangler (`wrangler.jsonc` pins the RelayRunner account). The one-time setup below uses the [cf CLI](https://developers.cloudflare.com/cf/), which reads the account from `CLOUDFLARE_ACCOUNT_ID`, so load the repo's `.env` first (`set -a; source .env; set +a`). Then:
 
 ```sh
-pnpm db:migrate:remote                   # the D1 Migrations workflow does this on merge to main; only needed by hand for a new database
-wrangler secret put BETTER_AUTH_SECRET   # and GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET
-wrangler r2 bucket create relayrunner-webhook-dead-letters   # once; a deploy fails until it exists
-wrangler r2 bucket lifecycle add relayrunner-webhook-dead-letters expire-30d --expire-days 30
-pnpm run deploy:api                      # from the repo root; deploys only, no migrations
+pnpm db:migrate:remote      # the D1 Migrations workflow does this on merge to main; only needed by hand for a new database
+cf workers secrets update BETTER_AUTH_SECRET --worker relayrunner-api --type secret_text --text "$(openssl rand -base64 32)"
+                            # and GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET the same way
+cf r2 buckets create --name relayrunner-webhook-dead-letters   # once; a deploy fails until it exists
+cf r2 buckets lifecycle update relayrunner-webhook-dead-letters \
+  --rules '[{"id":"expire-30d","enabled":true,"conditions":{"prefix":""},"deleteObjectsTransition":{"condition":{"type":"Age","maxAge":2592000}}}]'
+pnpm run deploy:api         # from the repo root; deploys only, no migrations
 ```
 
 `pnpm run deploy` (`scripts/deploy.ts`) runs `wrangler deploy` without rebuilding container images that haven't changed. It tags each image (`container/`, `packages/lint-runner/`) by a hash of its folder. When the Cloudflare registry already has that tag, it reuses the image. Otherwise it builds and pushes it with `wrangler containers build --push`, which needs Docker. It then deploys from `wrangler.deploy.jsonc`, a generated copy of `wrangler.jsonc` that points each container at its digest-pinned image. Plain `wrangler deploy` still works but rebuilds both images every time. Pass `--dry-run` to see which images would be built.
 
-`GITHUB_APP_PRIVATE_KEY` comes from the account's Secrets Store, not `wrangler secret put`, and a deploy fails until it exists there. Store it once as PKCS#8 PEM (GitHub downloads PKCS#1, which WebCrypto can't import):
+`GITHUB_APP_PRIVATE_KEY` comes from the account's Secrets Store, not a Worker secret, and a deploy fails until it exists there. Store it once as PKCS#8 PEM (GitHub downloads PKCS#1, which WebCrypto can't import):
 
 ```sh
-# The prompt only takes one line, so pass the PEM as --value. Command substitution keeps it out of
-# shell history.
-wrangler secrets-store secret create eac3493b9fef4234a832f5f3fdcc8a41 --remote --scopes workers \
-  --name GITHUB_APP_PRIVATE_KEY --value "$(openssl pkcs8 -topk8 -nocrypt -in relayrunner.*.private-key.pem)"
+cf secrets-store secrets create eac3493b9fef4234a832f5f3fdcc8a41 --body "$(jq -n \
+  --arg v "$(openssl pkcs8 -topk8 -nocrypt -in relayrunner.*.private-key.pem)" \
+  '[{name: "GITHUB_APP_PRIVATE_KEY", value: $v, scopes: ["workers"]}]')"
 ```
 
 The browser never talks to this Worker directly: the dashboard Worker (`apps/web`) forwards `/api/*` here over a service binding, so `BETTER_AUTH_URL` (in `wrangler.jsonc` vars) is the dashboard's origin: `https://app.relayrunner.app` until `app.relayrunner.dev` moves to this account. `.dev.vars` overrides it for local dev. Deploy this Worker before `apps/web`, since the binding needs it to exist. The GitHub App's callback URL is `<BETTER_AUTH_URL>/api/auth/callback/github`. Its webhook URL points at the webhooks Worker (`apps/webhooks`), not this one.
