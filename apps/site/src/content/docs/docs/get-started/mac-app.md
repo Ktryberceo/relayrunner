@@ -29,7 +29,7 @@ While it's on, the Mac takes jobs, each in its own Linux VM. The head is faded w
 
 The menu has a switch to turn the Mac on and off, with a line beside it that says what it's doing: waiting for jobs, how many are running and waiting, or when a pause ends.
 
-Each running job shows its name, workflow and repo, how long it has run and a bar against how long it usually takes on this Mac, with about how long it has left. Once it runs past its usual time, the bar says so.
+Each running job shows its name, workflow and repo, how long it has run and a bar against how long it usually takes on this Mac, with about how long it has left. Once it's clearly slower than usual, at least 30 seconds and a quarter over, the bar turns orange.
 
 Below that are **Pause New Jobs**, **Jobs…**, **Open Dashboard**, **Settings…** and **Quit RelayRunner**.
 
