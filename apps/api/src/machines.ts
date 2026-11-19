@@ -1,3 +1,4 @@
+import type { ChangeActor } from "./changes.ts";
 import { type SQL, and, count, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { type NewActivityEvent, recordEvent } from "./activity.ts";
 import type { Db } from "./db/index.ts";
@@ -564,18 +565,21 @@ export async function revokeMachines(env: Env, db: Db, where: SQL, actorUserId: 
   return machines;
 }
 
-export type PauseVia = "dashboard" | "cli";
+/**
+ * Who paused or resumed a machine: a person from the dashboard or through an agent (`agent` names
+ * its app), or the machine's own CLI, with no user.
+ */
+export type PauseActor = ChangeActor | { userId: null; via: "cli" };
 
 /**
- * Pauses or resumes a machine and logs it in Activity. `userId` is who did it from the dashboard,
- * or null for the machine's own CLI. Doing what's already the case changes nothing and logs
+ * Pauses or resumes a machine and logs it in Activity. Doing what's already the case changes nothing and logs
  * nothing. Returns the machine as it is now, or null if it's gone or revoked.
  */
 export async function setMachinePaused(
   db: Db,
   machineId: string,
   paused: boolean,
-  actor: { userId: string | null; via: PauseVia },
+  actor: PauseActor,
 ) {
   const [machine] = await db
     .update(schema.machine)
@@ -602,7 +606,11 @@ export async function setMachinePaused(
   }
   await recordMachineEvents(db, machine, {
     type: paused ? "machine.paused" : "machine.resumed",
-    data: { machineName: machine.name, via: actor.via },
+    data: {
+      machineName: machine.name,
+      via: actor.via,
+      ...("agent" in actor && { agent: actor.agent }),
+    },
     machineId: machine.id,
     actorUserId: actor.userId,
   });

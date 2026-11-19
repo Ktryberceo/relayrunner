@@ -1,8 +1,10 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { relayInputs } from "@relayrunner/runner-order";
+import { RUNNER_LABELS, relayInputs, type RunnerStep } from "@relayrunner/runner-order";
 import {
   Ban,
   ChevronRight,
+  Cpu,
+  ListOrdered,
   CircleCheck,
   CircleMinus,
   Laptop,
@@ -12,6 +14,7 @@ import {
   Plug,
   Plus,
   RotateCw,
+  Sparkles,
   Unplug,
   UserCheck,
   UserMinus,
@@ -61,6 +64,7 @@ import {
   type FreeCheckSavings,
 } from "@/lib/usage";
 import { failureText, jobNames, walkSummary } from "@/lib/route-walk";
+import { ruleText } from "@/lib/runner-order";
 import { formatDateTime } from "@/lib/time-zone";
 
 // Fast enough that a push shows up within seconds, without a live connection.
@@ -72,6 +76,7 @@ const TYPES: { value: ActivityFilter | undefined; label: string }[] = [
   { value: "check", label: "Checks" },
   { value: "machine", label: "Machines" },
   { value: "member", label: "Members" },
+  { value: "settings", label: "Settings" },
 ];
 const RANGES = [
   { days: 1, label: "Last 24 hours" },
@@ -503,6 +508,48 @@ function memberSentence(item: ActivityItem) {
   }
 }
 
+// One runner order step, with its limit as the Router page words it: "GitHub-hosted (while under
+// 80%)".
+function stepText(step: RunnerStep) {
+  const label = RUNNER_LABELS[step.key];
+  const limited = ("limit" in step && step.limit) || ("spendLimit" in step && step.spendLimit);
+  return limited ? `${label} (${ruleText(step).toLowerCase()})` : label;
+}
+
+// Settings events lead with who: "Ada set the default size for auto jobs to 4 vCPU".
+function settingsSentence(item: ActivityItem) {
+  switch (item.type) {
+    case "settings.runner_order":
+      return `set the runner order to ${item.data.steps.map(stepText).join(", then ")}`;
+    case "settings.auto_size":
+      return `set the default size for auto jobs to ${item.data.size} vCPU`;
+    case "settings.job_size": {
+      const { job, workflow, repository, size, first } = item.data;
+      const name = `${repository} › ${workflow ?? job}`;
+      if (size === null && first === null) return `put ${name} back on the defaults`;
+      const parts = [
+        size === null ? "the default size" : `${size} vCPU`,
+        ...(first ? [`trying ${RUNNER_LABELS[first]} first`] : []),
+      ];
+      return `set ${name} to ${parts.join(", ")}`;
+    }
+    case "settings.retries":
+      return item.data.enabled
+        ? `turned on automatic retries, up to ${item.data.max} per run`
+        : "turned off automatic retries";
+    case "settings.ai":
+      return item.data.enabled ? "turned on AI features" : "turned off AI features";
+    default:
+      return "";
+  }
+}
+
+// " through Claude" when a person made the change with an agent.
+function throughAgent(item: ActivityItem) {
+  const { agent } = item.data as { agent?: string };
+  return agent ? ` through ${agent}` : "";
+}
+
 function article(role: string) {
   return /^[aeiou]/i.test(role) ? `an ${role}` : `a ${role}`;
 }
@@ -524,6 +571,11 @@ const EVENT_ICONS = {
   "check.completed": CircleCheck,
   "member.joined": UserCheck,
   "minutes.overage": TriangleAlert,
+  "settings.runner_order": ListOrdered,
+  "settings.auto_size": Cpu,
+  "settings.job_size": Cpu,
+  "settings.retries": RotateCw,
+  "settings.ai": Sparkles,
 } as const;
 
 const ICON = "size-3.5 shrink-0";
@@ -732,6 +784,21 @@ function EventRow({ item, now }: { item: ActivityItem; now: number }) {
         </span>
       </Row>
     );
+  if (item.type.startsWith("settings.")) {
+    return (
+      <Row
+        icon={<Icon aria-hidden className={`${ICON} text-muted-foreground`} />}
+        at={item.occurredAt}
+        now={now}
+      >
+        <span className="font-medium">{item.actor?.name ?? "Someone"}</span>{" "}
+        <span className="text-muted-foreground">
+          {settingsSentence(item)}
+          {throughAgent(item)}
+        </span>
+      </Row>
+    );
+  }
   if (item.type.startsWith("member.")) {
     const who =
       item.type === "member.joined"
@@ -770,7 +837,13 @@ function EventRow({ item, now }: { item: ActivityItem; now: number }) {
     >
       <span className="font-medium">{item.machine?.name ?? "A machine"}</span>{" "}
       <span className="text-muted-foreground">{sentence(item)}</span>
-      {item.actor && <span className="text-muted-foreground"> by {item.actor.name}</span>}
+      {item.actor && (
+        <span className="text-muted-foreground">
+          {" "}
+          by {item.actor.name}
+          {throughAgent(item)}
+        </span>
+      )}
     </Row>
   );
 }
@@ -1191,6 +1264,45 @@ function samplePage(search: ActivitySearch): ActivityPage {
       occurredAt: at(0.15),
       actor: { id: "u1", name: "Atticus White" },
       machine: mac,
+      job: null,
+    },
+    {
+      id: 103,
+      type: "settings.job_size",
+      data: {
+        repository: "relayrunner/relayrunner-ci-tests",
+        workflow: "RelayRunner dev",
+        job: "test",
+        size: 8,
+        first: "machine",
+        via: "agent",
+        agent: "Claude",
+      },
+      occurredAt: at(4),
+      actor: { id: "u1", name: "Atticus White" },
+      machine: null,
+      job: null,
+    },
+    {
+      id: 102,
+      type: "settings.runner_order",
+      data: {
+        steps: [{ key: "machine" }, { key: "github", limit: { percent: 80 } }, { key: "github" }],
+        via: "agent",
+        agent: "Claude",
+      },
+      occurredAt: at(6),
+      actor: { id: "u1", name: "Atticus White" },
+      machine: null,
+      job: null,
+    },
+    {
+      id: 101,
+      type: "settings.retries",
+      data: { enabled: true, runner: "other", max: 1, via: "dashboard" },
+      occurredAt: at(12),
+      actor: { id: "u2", name: "Zach Ross" },
+      machine: null,
       job: null,
     },
     {

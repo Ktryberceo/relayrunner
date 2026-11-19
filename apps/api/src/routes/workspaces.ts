@@ -6,12 +6,13 @@ import {
 } from "@relayrunner/runner-order";
 import { and, asc, count, eq, isNotNull, isNull } from "drizzle-orm";
 import { Hono } from "hono";
+import { z } from "zod";
 import { createMiddleware } from "hono/factory";
 import { agentWorkspaceId } from "../agent-auth.ts";
 import type { AppEnv } from "../app.ts";
-import { createDb, schema } from "../db/index.ts";
+import { createDb, schema, type Db } from "../db/index.ts";
 import { isWorkspaceMember } from "../installations.ts";
-import { inWorkspace } from "../machines.ts";
+import { inWorkspace, sha256Hex } from "../machines.ts";
 import { requireUser } from "../middleware/session.ts";
 import { requireWorkspace } from "../middleware/workspace.ts";
 import { requireManager } from "../roles.ts";
@@ -21,16 +22,24 @@ import { present } from "./github.ts";
 import { AppError } from "@relayrunner/errors";
 import { annotate } from "../tracing.ts";
 import { routerSetup } from "../router-setup.ts";
+import { changeSetting } from "../changes.ts";
 import { DEFAULT_AUTO_SIZE } from "@relayrunner/providers";
 import { setWorkspaceAi } from "../ai/settings.ts";
-import { autoJobSettingSchema, autoSizeSchema, listAutoJobs, setAutoJob } from "../auto-jobs.ts";
+import {
+  autoJobSettingSchema,
+  autoSizeSchema,
+  getAutoJob,
+  listAutoJobs,
+  setAutoJob,
+} from "../auto-jobs.ts";
 
 // Any member of the workspace in the path. Someone outside it gets a 404, so ids don't leak.
-// An agent token (agent-auth.ts) only reaches the workspaces it was granted.
+// An agent token (agent-auth.ts) only reaches the workspaces it was granted, and changes one only
+// where it's allowed changes.
 const requireMember = createMiddleware<AppEnv>(async (c, next) => {
   const workspaceId = c.req.param("id") ?? "";
   annotate({ "relayrunner.workspace_id": workspaceId });
-  if (c.var.agent && agentWorkspaceId(c.var.agent, workspaceId) === null) {
+  if (c.var.agent && agentWorkspaceId(c.var.agent, workspaceId, c.req.method) === null) {
     throw new AppError("NOT_FOUND");
   }
   const userId = c.var.user!.id;
@@ -87,17 +96,15 @@ export const workspaceRoutes = new Hono<AppEnv>()
     return c.json({ counts });
   })
   // The workspace's runner order (#110). Routing reads it from #113 on.
-  .get("/:id/runner-order", requireUser, requireMember, async (c) => {
-    const [row] = await c.var.db
-      .select({ runnerOrder: schema.workspace.runnerOrder })
-      .from(schema.workspace)
-      .where(eq(schema.workspace.id, c.req.param("id")))
-      .limit(1);
-    return c.json({ order: readRunnerOrder(row?.runnerOrder), isDefault: !row?.runnerOrder });
-  })
-  // Owners and admins only; members can read it.
+  // `version` changes whenever the order does: pass it back to the PUT to refuse saving over a change
+  // made since.
+  .get("/:id/runner-order", requireUser, requireMember, async (c) =>
+    c.json(await presentOrder((await settings(c.var.db, c.req.param("id"))).runnerOrder)),
+  )
+  // Owners and admins only; members can read it. Answers the new order and the one it replaced.
   .put("/:id/runner-order", requireUser, requireMember, requireManager, async (c) => {
-    const parsed = runnerOrderSchema.safeParse(await c.req.json().catch(() => null));
+    const id = c.req.param("id");
+    const parsed = runnerOrderBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {
       const issues = parsed.error.issues.map(({ path, message }) => ({ path, message }));
       throw new AppError("RUNNER_ORDER_INVALID", {
@@ -105,11 +112,19 @@ export const workspaceRoutes = new Hono<AppEnv>()
         details: { issues },
       });
     }
-    await c.var.db
-      .update(schema.workspace)
-      .set({ runnerOrder: JSON.stringify(parsed.data) })
-      .where(eq(schema.workspace.id, c.req.param("id")));
-    return c.json({ order: parsed.data, isDefault: false });
+    const { version, ...order } = parsed.data;
+    const previous = await presentOrder((await settings(c.var.db, id)).runnerOrder);
+    if (version !== undefined && version !== previous.version) {
+      throw new AppError("RUNNER_ORDER_CHANGED");
+    }
+    const stored = JSON.stringify(order);
+    await changeSetting(c, id, {
+      previous: previous.order,
+      next: order,
+      write: () => setWorkspace(c.var.db, id, { runnerOrder: stored }),
+      event: { type: "settings.runner_order", data: { steps: order.steps } },
+    });
+    return c.json({ ...(await presentOrder(stored)), previous: previous.order });
   })
   // Which hosted providers' GitHub Apps the workspace's org has installed, for the Router's Add
   // step menu. Null when we can't tell: a personal account (GitHub only lists an org's apps), or
@@ -152,35 +167,44 @@ export const workspaceRoutes = new Hono<AppEnv>()
   // set for each, and the workspace's default size (src/auto-jobs.ts).
   .get("/:id/auto-jobs", requireUser, requireMember, async (c) => {
     const id = c.req.param("id");
-    const [[row], jobs] = await Promise.all([
-      c.var.db
-        .select({ size: schema.workspace.autoSize })
-        .from(schema.workspace)
-        .where(eq(schema.workspace.id, id))
-        .limit(1),
-      listAutoJobs(c.var.db, id),
-    ]);
-    return c.json({ size: row?.size ?? DEFAULT_AUTO_SIZE, jobs });
+    const [row, jobs] = await Promise.all([settings(c.var.db, id), listAutoJobs(c.var.db, id)]);
+    return c.json({ size: row.autoSize, jobs });
   })
   // The default size for auto jobs. Owners and admins, like the order.
   .put("/:id/auto-size", requireUser, requireMember, requireManager, async (c) => {
+    const id = c.req.param("id");
     const body = (await c.req.json().catch(() => null)) as { size?: unknown } | null;
     const parsed = autoSizeSchema.safeParse(body?.size);
     if (!parsed.success) throw new AppError("INVALID_REQUEST");
-    await c.var.db
-      .update(schema.workspace)
-      .set({ autoSize: parsed.data })
-      .where(eq(schema.workspace.id, c.req.param("id")));
-    return c.json({ size: parsed.data });
+    const size = parsed.data;
+    const previous = (await settings(c.var.db, id)).autoSize;
+    await changeSetting(c, id, {
+      previous,
+      next: size,
+      write: () => setWorkspace(c.var.db, id, { autoSize: size }),
+      event: { type: "settings.auto_size", data: { size } },
+    });
+    return c.json({ size, previous });
   })
-  // One auto job's size and the provider it tries first. Owners and admins, like the order.
+  // One auto job's size and the provider it tries first; one left out stays as it is. Owners and
+  // admins, like the order.
   .put("/:id/auto-jobs/:jobId", requireUser, requireMember, requireManager, async (c) => {
-    const parsed = autoJobSettingSchema.safeParse(await c.req.json().catch(() => null));
+    const parsed = autoJobSettingSchema.partial().safeParse(await c.req.json().catch(() => null));
     const jobId = Number(c.req.param("jobId"));
     if (!parsed.success || !Number.isSafeInteger(jobId)) throw new AppError("INVALID_REQUEST");
-    const found = await setAutoJob(c.var.db, c.req.param("id"), jobId, parsed.data, c.var.user!.id);
-    if (!found) throw new AppError("NOT_FOUND");
-    return c.json(parsed.data);
+    const id = c.req.param("id");
+    const job = await getAutoJob(c.var.db, id, jobId);
+    if (!job) throw new AppError("NOT_FOUND");
+    const { size, first, repository, workflow, relayJob } = job;
+    const previous = { size, first };
+    const next = { ...previous, ...parsed.data };
+    await changeSetting(c, id, {
+      previous,
+      next,
+      write: () => setAutoJob(c.var.db, id, jobId, next, c.var.user!.id),
+      event: { type: "settings.job_size", data: { repository, workflow, job: relayJob, ...next } },
+    });
+    return c.json({ ...next, previous });
   })
   // Whether the Router skips hosted provider runner types that stopped picking up jobs, and the
   // ones it skips now (src/provider-health.ts).
@@ -207,39 +231,44 @@ export const workspaceRoutes = new Hono<AppEnv>()
     return c.json({ enabled: body.enabled });
   })
   // When the workspace turned off AI features (src/ai), or null while they're on (the default).
-  .get("/:id/ai", requireUser, requireMember, async (c) => {
-    const [row] = await c.var.db
-      .select({ offAt: schema.workspace.aiOffAt })
-      .from(schema.workspace)
-      .where(eq(schema.workspace.id, c.req.param("id")))
-      .limit(1);
-    return c.json({ offAt: row?.offAt ?? null });
-  })
+  .get("/:id/ai", requireUser, requireMember, async (c) =>
+    c.json({ offAt: (await settings(c.var.db, c.req.param("id"))).aiOffAt }),
+  )
   // Turns AI on or off. Owners and admins, like the order.
   .put("/:id/ai", requireUser, requireMember, requireManager, async (c) => {
     const body = (await c.req.json().catch(() => null)) as { enabled?: unknown } | null;
     if (typeof body?.enabled !== "boolean") throw new AppError("INVALID_REQUEST");
-    await setWorkspaceAi(c.var.db, c.req.param("id"), body.enabled, c.var.user!.id);
-    return c.json({ enabled: body.enabled });
+    const { enabled } = body;
+    const id = c.req.param("id");
+    const previous = !(await settings(c.var.db, id)).aiOffAt;
+    // Turning it off again would purge again and move its off time, so a repeat changes nothing.
+    await changeSetting(c, id, {
+      previous,
+      next: enabled,
+      write: () => setWorkspaceAi(c.var.db, id, enabled, c.var.user!.id),
+      event: { type: "settings.ai", data: { enabled } },
+    });
+    return c.json({ enabled, previous });
   })
   // Automatic retries of jobs whose runner failed them (src/retries.ts). Off until turned on.
-  .get("/:id/retry-settings", requireUser, requireMember, async (c) => {
-    const [row] = await c.var.db
-      .select({ settings: schema.workspace.retrySettings })
-      .from(schema.workspace)
-      .where(eq(schema.workspace.id, c.req.param("id")))
-      .limit(1);
-    return c.json(readRetrySettings(row?.settings));
-  })
-  // Owners and admins, like the order.
+  .get("/:id/retry-settings", requireUser, requireMember, async (c) =>
+    c.json((await settings(c.var.db, c.req.param("id"))).retrySettings),
+  )
+  // Owners and admins, like the order. A setting left out stays as it is.
   .put("/:id/retry-settings", requireUser, requireMember, requireManager, async (c) => {
-    const parsed = retrySettingsSchema.safeParse(await c.req.json().catch(() => null));
+    const id = c.req.param("id");
+    const previous = (await settings(c.var.db, id)).retrySettings;
+    const body = (await c.req.json().catch(() => null)) as object | null;
+    const parsed = retrySettingsSchema.safeParse(body && { ...previous, ...body });
     if (!parsed.success) throw new AppError("INVALID_REQUEST");
-    await c.var.db
-      .update(schema.workspace)
-      .set({ retrySettings: JSON.stringify(parsed.data) })
-      .where(eq(schema.workspace.id, c.req.param("id")));
-    return c.json(parsed.data);
+    const next = parsed.data;
+    await changeSetting(c, id, {
+      previous,
+      next,
+      write: () => setWorkspace(c.var.db, id, { retrySettings: JSON.stringify(next) }),
+      event: { type: "settings.retries", data: next },
+    });
+    return c.json({ ...next, previous });
   })
   // "Try again now": jobs go to the runner type again. Owners and admins, like the order.
   .delete(
@@ -255,3 +284,44 @@ export const workspaceRoutes = new Hono<AppEnv>()
       return c.json({ cleared: true });
     },
   );
+
+// The workspace's routing settings, with defaults for the ones nobody set.
+async function settings(db: Db, workspaceId: string) {
+  const [row] = await db
+    .select({
+      runnerOrder: schema.workspace.runnerOrder,
+      autoSize: schema.workspace.autoSize,
+      retrySettings: schema.workspace.retrySettings,
+      aiOffAt: schema.workspace.aiOffAt,
+    })
+    .from(schema.workspace)
+    .where(eq(schema.workspace.id, workspaceId))
+    .limit(1);
+  return {
+    runnerOrder: row?.runnerOrder ?? null,
+    autoSize: row?.autoSize ?? DEFAULT_AUTO_SIZE,
+    retrySettings: readRetrySettings(row?.retrySettings),
+    aiOffAt: row?.aiOffAt ?? null,
+  };
+}
+
+function setWorkspace(
+  db: Db,
+  workspaceId: string,
+  values: Partial<typeof schema.workspace.$inferInsert>,
+) {
+  return db.update(schema.workspace).set(values).where(eq(schema.workspace.id, workspaceId));
+}
+
+// The runner order as stored, whether it's the default, and its version: a short hash that changes
+// whenever the order does ("default" until someone saves one).
+async function presentOrder(stored: string | null) {
+  return {
+    order: readRunnerOrder(stored),
+    isDefault: !stored,
+    version: stored ? (await sha256Hex(stored)).slice(0, 16) : "default",
+  };
+}
+
+// The PUT's body: the order, and optionally the version it was read at.
+const runnerOrderBody = runnerOrderSchema.extend({ version: z.string().optional() });

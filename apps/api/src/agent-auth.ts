@@ -7,11 +7,15 @@
 // (middleware/session.ts) turns it into a request for that user, limited to AGENT_ROUTES and to the
 // grant's workspaces the user still belongs to.
 //
-// Phase 1 is read-only: the only scope is workspace:read, and every agent route but one is a GET.
-// The exception is POST /api/feedback (routes/feedback.ts): it changes no workspace state, only
-// records what the agent reports, rate-limited per user.
+// Agents read by default: the only scope is workspace:read. They may also change a few settings
+// (AGENT_WRITE_ROUTES) in a workspace where an owner or admin turned on Allow changes for them in
+// Settings → Agents (agent_grant_workspace.can_write, read live on every request). The routes
+// themselves still check the user's role, as they do for the dashboard. POST /api/feedback
+// (routes/feedback.ts) changes no workspace state, only records what the agent reports,
+// rate-limited per user.
 
 import { mcp } from "@better-auth/mcp";
+import { AppError } from "@relayrunner/errors";
 import { APIError } from "better-auth/api";
 import { verifyJwsAccessToken } from "better-auth/oauth2";
 import { decodeProtectedHeader } from "jose";
@@ -72,6 +76,16 @@ export function agentOAuth(env: Env) {
   });
 }
 
+/** An agent's app name as it registered itself, such as "Claude", or null when it gave none. */
+export async function agentClientName(db: Db, clientId: string) {
+  const [client] = await db
+    .select({ name: schema.oauthClient.name })
+    .from(schema.oauthClient)
+    .where(eq(schema.oauthClient.clientId, clientId))
+    .limit(1);
+  return client?.name ?? null;
+}
+
 /** The grant the workspace picker last wrote for this session, while consent may still use it. */
 export async function pendingGrant(db: Db, sessionId: unknown, userId: string) {
   if (typeof sessionId !== "string") return null;
@@ -93,7 +107,11 @@ export async function pendingGrant(db: Db, sessionId: unknown, userId: string) {
 /** The workspaces a grant still covers that its user still belongs to. */
 async function grantedWorkspaces(db: Db, grantId: string, userId: string) {
   return db
-    .select({ id: schema.workspace.id, name: schema.workspace.name })
+    .select({
+      id: schema.workspace.id,
+      name: schema.workspace.name,
+      canWrite: schema.agentGrantWorkspace.canWrite,
+    })
     .from(schema.agentGrantWorkspace)
     .innerJoin(schema.workspace, eq(schema.workspace.id, schema.agentGrantWorkspace.workspaceId))
     .innerJoin(schema.agentGrant, eq(schema.agentGrant.id, schema.agentGrantWorkspace.grantId))
@@ -113,16 +131,29 @@ export interface AgentPrincipal {
   grantId: string;
   // The OAuth client (the agent app) the token was issued to.
   clientId: string;
-  workspaces: { id: string; name: string }[];
+  // canWrite: whether it may change settings there (AGENT_WRITE_ROUTES).
+  workspaces: { id: string; name: string; canWrite: boolean }[];
 }
 
 /**
  * The workspace an agent request reads: the one AGENT_WORKSPACE_HEADER names if the grant covers
- * it, else the grant's only one. Null when it names another or has several and names none.
+ * it, else the grant's only one. Null when it names another or has several and names none. A
+ * request by `method` other than GET or HEAD changes it (agentMayCall only lets those through to
+ * AGENT_WRITE_ROUTES), so it throws AGENT_CHANGES_OFF where the agent isn't allowed changes.
+ * Feedback, which changes no workspace, leaves `method` out.
  */
-export function agentWorkspaceId(agent: AgentPrincipal, requested: string | undefined) {
+export function agentWorkspaceId(
+  agent: AgentPrincipal,
+  requested: string | undefined,
+  method = "GET",
+) {
   const id = requested ?? (agent.workspaces.length === 1 ? agent.workspaces[0].id : undefined);
-  return agent.workspaces.some((workspace) => workspace.id === id) ? id! : null;
+  const granted = agent.workspaces.find((workspace) => workspace.id === id);
+  if (!granted) return null;
+  if (method !== "GET" && method !== "HEAD" && !granted.canWrite) {
+    throw new AppError("AGENT_CHANGES_OFF");
+  }
+  return granted.id;
 }
 
 // Keeps verified signing keys per isolate (5 minutes, refetched on an unknown key id) instead of
@@ -183,14 +214,14 @@ export function agentIssuer(env: Env) {
   return new URL("/api/auth", env.BETTER_AUTH_URL).toString();
 }
 
-// What an agent token may call: read-only views of its own workspace, D1 reads apart from a run's
+// What an agent token may read: read-only views of its own workspace, D1 reads apart from a run's
 // failures, which read a few failed jobs' logs from GitHub (bounded by MAX_JOBS in
 // job-failures.ts). Nothing takes the Router's lock or changes anything. Routes with a workspace
 // id in the path only accept the token's workspaces (requireMember in routes/workspaces.ts).
 const AGENT_ROUTES: RegExp[] = [
   /^\/api\/me$/,
   /^\/api\/workspaces\/current$/,
-  /^\/api\/workspaces\/[^/]+\/(runner-order|router-setup|auto-jobs)$/,
+  /^\/api\/workspaces\/[^/]+\/(runner-order|router-setup|auto-jobs|retry-settings|ai)$/,
   /^\/api\/machines$/,
   /^\/api\/runs$/,
   /^\/api\/runs\/\d+\/\d+\/\d+\/(jobs|failures)$/,
@@ -201,12 +232,21 @@ const AGENT_ROUTES: RegExp[] = [
   /^\/api\/signals(\/runs)?$/,
 ];
 
-// Routes an agent may call by method. The one write is agent feedback, which only adds a row for
-// its own user (routes/feedback.ts).
+// The settings an agent may change, by method, in a workspace that allows it changes
+// (agentWorkspaceId). Each is a dashboard route that logs the change in Activity and checks the user's
+// role itself. None deletes anything or touches members, installs or billing.
+const AGENT_WRITE_ROUTES: Record<string, RegExp[]> = {
+  PUT: [/^\/api\/workspaces\/[^/]+\/(runner-order|auto-size|auto-jobs\/\d+|retry-settings|ai)$/],
+  POST: [/^\/api\/machines\/[^/]+\/(pause|resume)$/],
+};
+
+// Routes an agent may call by method: the reads, agent feedback (which only adds a row for its own
+// user, routes/feedback.ts), and the writes.
 export const AGENT_ROUTES_BY_METHOD: Record<string, RegExp[]> = {
   GET: AGENT_ROUTES,
   HEAD: AGENT_ROUTES,
-  POST: [/^\/api\/feedback$/],
+  POST: [/^\/api\/feedback$/, ...AGENT_WRITE_ROUTES.POST],
+  PUT: AGENT_WRITE_ROUTES.PUT,
 };
 
 export function agentMayCall(method: string, pathname: string) {
