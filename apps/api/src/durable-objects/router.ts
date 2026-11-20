@@ -98,8 +98,9 @@ export interface PickedJob extends JobStarters, RelayInputs {
   runId: number;
   // Public repos never go to a machine: anyone could run code on it with a pull request.
   private: boolean;
-  // startedBy and triggeredBy (JobStarters): who started the run and this attempt. A machine
-  // that's `only_me` takes the job only when both are its owner.
+  // startedBy, triggeredBy and runAttempt (JobStarters): who started the run and this attempt, and
+  // which attempt it is. A machine that's `only_me` takes the job when its owner started the run:
+  // on the first attempt, only when its owner started that attempt too (admits).
   // Set when this attempt is an automatic retry (src/retries.ts): where the job failed and where
   // the retry should go.
   retry?: RetryPick | null;
@@ -1124,8 +1125,9 @@ export class Router extends DurableObject<Env> {
     };
     const stored = await this.ctx.storage.get<Route>(ROUTE_KEY + routeId);
     if (!mayReroute(stored, rerun)) return null;
-    // Until this attempt's workflow_run arrives, nobody started it: only machines shared with
-    // anyone can take the job then.
+    // Sharing only needs who started the run, which the pick knows: `only_me` takes any re-run of
+    // its owner's run, whoever re-ran it (admits). Who re-ran it is known only once this attempt's
+    // workflow_run arrives, which can come after the `queued` webhook; until then it's null.
     const starters = await runStartersForJobs(db, [key], new Map([[jobKey(key), pick]]), jobKey);
     const job: PickedJob = {
       workspaceId: queued.workspaceId,
@@ -1135,9 +1137,9 @@ export class Router extends DurableObject<Env> {
       runId: queued.runId,
       private: repo.private,
       ...pick.inputs,
-      startedBy: null,
-      triggeredBy: null,
-      ...starters.get(jobKey(key)),
+      startedBy: pick.startedBy,
+      triggeredBy: starters.get(jobKey(key))?.triggeredBy ?? null,
+      runAttempt,
     };
     const answered = await this.pickMachine(job, rerun);
     // Every machine that fits is full, or offline or paused (one may be back soon: a deploy drops
@@ -1182,6 +1184,26 @@ export class Router extends DurableObject<Env> {
     const route = await this.ctx.storage.get<Route>(ROUTE_KEY + routeId);
     if (!route || Date.now() - route.createdAt > ROUTE_TTL_MS || !canClaim(route, job)) return null;
     return route.machineId;
+  }
+
+  /**
+   * Whether the Router still has `job` in hand on its `rr-<routeId>` label, for the orphaned job
+   * sweep (src/orphaned-jobs.ts): it waits in line for a machine slot (full machines are not stuck),
+   * or a live route was claimed by it or can still be. Reads storage only.
+   */
+  async holds(routeId: string, job: QueuedJob): Promise<boolean> {
+    const now = Date.now();
+    const [waiting, route] = await Promise.all([
+      this.ctx.storage.get<WaitingJob>(WAIT_KEY + routeId),
+      this.ctx.storage.get<Route>(ROUTE_KEY + routeId),
+    ]);
+    if (waiting && now - waiting.queuedAt <= ROUTE_TTL_MS && canClaim(waiting, job)) return true;
+    return (
+      !!route &&
+      route.state !== "done" &&
+      now - route.createdAt <= ROUTE_TTL_MS &&
+      canClaim(route, job)
+    );
   }
 
   /**
