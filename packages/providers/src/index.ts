@@ -396,6 +396,7 @@ export {
   runnerSize,
   sizeText,
 } from "./prices.ts";
+export { type CatalogRow, type CatalogRunner, runnerCatalog } from "./runner-catalog.ts";
 export { type FoundPrice, PRICE_SOURCES, type PriceSource } from "./price-sources.ts";
 export {
   BILLING_PROVIDER_IDS,

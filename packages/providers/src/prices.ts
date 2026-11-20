@@ -12,6 +12,100 @@ import type { ProviderId } from "./index.ts";
 /** When the base prices below were last checked against the services' pages. */
 export const PRICES_CHECKED = "2026-11-11";
 
+/** The systems runners come in, for comparing runners across providers. */
+export type RunnerPlatform = "linux" | "arm" | "windows" | "windows-arm" | "macos";
+
+/** A GitHub larger runner: what it's called, its billing SKU, size and list price. */
+export interface GitHubLargerRunner {
+  rate: string;
+  sku: string;
+  name: string;
+  platform: RunnerPlatform | "gpu";
+  size: RunnerSize;
+  usd: number;
+}
+
+// Linux and Windows larger runners: 4 GB a core.
+const coreLadder = (os: "linux" | "windows", arm: boolean, prices: [number, number][]) =>
+  prices.map(([cores, usd]): GitHubLargerRunner => ({
+    rate: `${os}${arm ? "-arm" : ""}-${cores}-core`,
+    sku: `${os}_${cores}_core${arm ? "_arm" : ""}`,
+    name: `${os === "linux" ? "Linux" : "Windows"}${arm ? " Arm" : ""} ${cores}-core`,
+    platform: os === "linux" ? (arm ? "arm" : "linux") : arm ? "windows-arm" : "windows",
+    size: { vcpus: cores, memoryGb: cores * 4 },
+    usd,
+  }));
+
+/**
+ * GitHub's larger runners, for Team and Enterprise plans. Each is named by the org that makes it, so
+ * jobs can't be matched to one by label; they price the catalog on the GitHub provider page.
+ * https://docs.github.com/en/billing/reference/actions-runner-pricing (checked 2026-11-20)
+ */
+export const GITHUB_LARGER: GitHubLargerRunner[] = [
+  ...coreLadder("linux", false, [
+    [4, 0.012],
+    [8, 0.022],
+    [16, 0.042],
+    [32, 0.082],
+    [64, 0.162],
+    [96, 0.252],
+  ]),
+  ...coreLadder("linux", true, [
+    [4, 0.008],
+    [8, 0.014],
+    [16, 0.026],
+    [32, 0.05],
+    [64, 0.098],
+  ]),
+  ...coreLadder("windows", false, [
+    [4, 0.022],
+    [8, 0.042],
+    [16, 0.082],
+    [32, 0.162],
+    [64, 0.322],
+    [96, 0.552],
+  ]),
+  ...coreLadder("windows", true, [
+    [4, 0.014],
+    [8, 0.026],
+    [16, 0.05],
+    [32, 0.098],
+    [64, 0.194],
+  ]),
+  {
+    rate: "macos-xl",
+    sku: "macos_xl",
+    name: "macOS M2 Pro",
+    platform: "macos",
+    size: { vcpus: 5, memoryGb: 14 },
+    usd: 0.102,
+  },
+  {
+    rate: "macos-l",
+    sku: "macos_l",
+    name: "macOS 12-core Intel",
+    platform: "macos",
+    size: { vcpus: 12, memoryGb: 30 },
+    usd: 0.077,
+  },
+  {
+    rate: "linux-4-core-gpu",
+    sku: "linux_4_core_gpu",
+    name: "Linux GPU 4-core",
+    platform: "gpu",
+    size: { vcpus: 4, memoryGb: 28 },
+    usd: 0.052,
+  },
+  {
+    rate: "windows-4-core-gpu",
+    sku: "windows_4_core_gpu",
+    name: "Windows GPU 4-core",
+    platform: "gpu",
+    size: { vcpus: 4, memoryGb: 28 },
+    usd: 0.102,
+  },
+];
+
 /** A provider's rates, and what one minute of each is per. */
 export const RATES = {
   blacksmith: { linux: "vcpu", arm: "vcpu", windows: "vcpu", macos: "vcpu" },
@@ -59,13 +153,20 @@ export const RATES = {
     "windows-2-core": "runner",
     "windows-arm-2-core": "runner",
     macos: "runner",
+    ...Object.fromEntries(GITHUB_LARGER.map(({ rate }) => [rate, "runner" as const])),
   },
 } as const satisfies Partial<Record<ProviderId, Record<string, "vcpu" | "runner">>>;
 
 export type PricedProvider = keyof typeof RATES;
 
-/** GitHub's standard hosted runners, the ones it publishes a per-minute price for. */
-export type GitHubRunner = keyof (typeof RATES)["github"];
+/** GitHub's standard hosted runners, the ones jobs name by a fixed label. */
+export type GitHubRunner =
+  | "linux-1-core"
+  | "linux-2-core"
+  | "linux-arm-2-core"
+  | "windows-2-core"
+  | "windows-arm-2-core"
+  | "macos";
 
 /**
  * The `runs-on` label GitHub's docs give each standard runner, the name people know it by. Where
@@ -193,6 +294,7 @@ export const BASE_PRICES: PriceRow[] = [
   { provider: "github", rate: "windows-2-core", usd: 0.01, from: "2026-11-11" },
   { provider: "github", rate: "windows-arm-2-core", usd: 0.01, from: "2026-11-11" },
   { provider: "github", rate: "macos", usd: 0.062, from: "2026-11-11" },
+  ...GITHUB_LARGER.map(({ rate, usd }) => ({ provider: "github", rate, usd, from: "2026-11-20" })),
 ];
 
 /** A UTC day (YYYY-MM-DD) as epoch ms at its midnight. */
@@ -255,6 +357,8 @@ const RATE_NAMES: Record<string, string> = {
   premium: "Premium",
   memory: "Memory-heavy",
   ...GITHUB_LABELS,
+  // GitHub's larger runners have no fixed label, so they go by size: "Linux Arm 8-core".
+  ...Object.fromEntries(GITHUB_LARGER.map(({ rate, name }) => [rate, name])),
 };
 
 /** A rate as people say it, such as "Linux Arm" or `ubuntu-slim`. */
@@ -295,9 +399,6 @@ export const platformOf = (label: string) => {
   if (label.includes("windows")) return "windows";
   return label.includes("arm") ? "arm" : "linux";
 };
-
-/** The platforms runners come in, for comparing runners across providers. */
-export type RunnerPlatform = "linux" | "arm" | "windows" | "windows-arm" | "macos";
 
 /**
  * The platform a provider's runner label asks for, or null when the label doesn't say (a
@@ -453,14 +554,15 @@ export interface RunnerSize {
   memoryGb?: number;
 }
 
-// GitHub's standard runners in a private repo, by the rate that names them. macOS isn't here: its
-// sizes differ by image (Intel, Apple silicon, large, xlarge).
+// GitHub's runners in a private repo, by the rate that names them. Standard macOS isn't here: its
+// size differs by image (Intel or Apple silicon).
 const GITHUB_SIZES: Partial<Record<string, RunnerSize>> = {
   "linux-1-core": { vcpus: 1, memoryGb: 5 },
   "linux-2-core": { vcpus: 2, memoryGb: 8 },
   "linux-arm-2-core": { vcpus: 2, memoryGb: 8 },
   "windows-2-core": { vcpus: 2, memoryGb: 8 },
   "windows-arm-2-core": { vcpus: 2, memoryGb: 8 },
+  ...Object.fromEntries(GITHUB_LARGER.map(({ rate, size }) => [rate, size])),
 };
 
 // Cloudflare Containers instance types RelayRunner runs jobs on.

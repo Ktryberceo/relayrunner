@@ -5,7 +5,9 @@ import {
   PRICES_CHECKED,
   type ProviderId,
   type RatePrices,
+  priceBook,
   ratePrices,
+  runnerCatalog,
   runnerSize,
 } from "@relayrunner/providers";
 import { api } from "@/lib/api";
@@ -97,7 +99,8 @@ function sampleRunner(
       : listRate(BASE_BOOK, provider, label);
   const size = runnerSize(provider, provider === "github" ? "linux-2-core" : label);
   return {
-    key: `${provider}:${label}`,
+    // The API keys GitHub runners by their rate.
+    key: `${provider}:${provider === "github" ? "linux-2-core" : label}`,
     label,
     detail,
     ...(size && { size }),
@@ -165,4 +168,12 @@ export function sampleProvidersOverview(days: number): ProvidersOverview {
     }))
     .sort((a, b) => b.jobs - a.jobs);
   return { days, pricesChecked: PRICES_CHECKED, providers };
+}
+
+/** Every runner the provider sells, by system, priced from the report's list prices. */
+export function reportCatalog({ provider, prices }: ProviderReport) {
+  const rows = prices.flatMap(({ rate, history }) =>
+    history.map(({ usd, from }) => ({ provider, rate, usd, from })),
+  );
+  return runnerCatalog(priceBook(rows), provider);
 }

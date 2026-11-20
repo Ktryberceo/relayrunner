@@ -3,7 +3,9 @@ import { Count } from "@/components/count";
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { ArrowLeftIcon, ArrowUpRightIcon } from "lucide-react";
 import { useState } from "react";
+import { IncludedMinutes } from "@/components/actions-minutes";
 import { CodeBlock } from "@/components/code-block";
+import { MachinePrices, PRICE_VIEWS, type PriceView } from "@/components/machine-prices";
 import { ProviderPlans } from "@/components/provider-plans";
 import { providerStyle, runnerName, runnerSpec, TILE } from "@/components/providers";
 import { TimeRangePicker } from "@/components/range-picker";
@@ -24,10 +26,18 @@ import {
   type ProviderRunner,
   rateName,
   rateText,
+  reportCatalog,
   sampleProviderReport,
 } from "@/lib/providers";
 import { cn } from "@/lib/utils";
-import { type RangeSearch, rangeSearch, useRangeReport, useSetSearch } from "@/lib/search-params";
+import {
+  optionParam,
+  type RangeSearch,
+  unlessDefault,
+  rangeSearch,
+  useRangeReport,
+  useSetSearch,
+} from "@/lib/search-params";
 import { rangeDays, rangePhrase, type TimeRange } from "@/lib/time-range";
 import { usePageTitle } from "@/lib/page-title";
 
@@ -37,7 +47,19 @@ function load(provider: string, range: TimeRange) {
     : getProviderReport(provider, range);
 }
 
-const { validateSearch, rangeOf, toSearch } = rangeSearch(PROVIDER_RANGES, PROVIDER_DEFAULT_RANGE);
+const rangeParams = rangeSearch(PROVIDER_RANGES, PROVIDER_DEFAULT_RANGE);
+const { rangeOf, toSearch } = rangeParams;
+
+type ProviderSearch = RangeSearch & { prices?: PriceView };
+
+// The range, and `?prices=chart` when Machine prices shows its chart.
+const validateSearch = (search: Record<string, unknown>): ProviderSearch => ({
+  ...rangeParams.validateSearch(search),
+  prices: optionParam(
+    search.prices,
+    PRICE_VIEWS.map((view) => view.value),
+  ),
+});
 
 // The widest range the page offers, to tell a provider nobody has used from a quiet month.
 const WIDEST: TimeRange = "30d";
@@ -66,11 +88,13 @@ function ProviderPage() {
 
 function ProviderView({ first, unused }: { first: ProviderReport; unused: boolean }) {
   const { provider } = first;
-  const range = rangeOf(Route.useSearch());
-  const setSearch = useSetSearch<RangeSearch>();
+  const search = Route.useSearch();
+  const range = rangeOf(search);
+  const setSearch = useSetSearch<ProviderSearch>();
   const report = useRangeReport(first, range, (next) => load(provider, next));
   const info = providerInfo(provider);
   usePageTitle(info.name);
+  const catalog = reportCatalog(report);
   // Nothing ran here in the widest range: lead with how to start instead of empty numbers.
   const [notSetUp] = useState(unused && !!info.example);
   const { icon, tile } = providerStyle(provider);
@@ -139,9 +163,22 @@ function ProviderView({ first, unused }: { first: ProviderReport; unused: boolea
         </div>
       )}
 
+      {provider === "github" && <IncludedMinutes />}
+
       <ProviderPlans provider={provider} />
 
-      <Prices prices={report.prices} />
+      {catalog.length ? (
+        <MachinePrices
+          provider={provider}
+          catalog={catalog}
+          runners={report.runners}
+          view={search.prices ?? "grid"}
+          onView={(view) => setSearch({ prices: unlessDefault(view, "grid") })}
+        />
+      ) : (
+        // Providers operators added have one price and no catalog.
+        <Prices prices={report.prices} />
+      )}
 
       {!notSetUp && info.example && (
         <div className="grid max-w-3xl gap-3">
