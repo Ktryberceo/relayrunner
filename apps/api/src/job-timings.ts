@@ -16,7 +16,7 @@ import { appInstallationToken, jobAnnotations } from "./github-app.ts";
 import { countsAsJob, jobCountUpserts } from "./job-counts.ts";
 import { providerSpendUpsert } from "./provider-spend.ts";
 import { hostedRunner, runnerWaitUpsert } from "./runner-waits.ts";
-import { findInstallation } from "./installations.ts";
+import type { InstallationLookup } from "./installations.ts";
 import { parseDate } from "./jobs.ts";
 import { loadPriceBook } from "./prices.ts";
 import { routeIdFromLabels } from "./routing.ts";
@@ -186,11 +186,11 @@ export async function withTimeout(
   env: Pick<Env, "GITHUB_APP_ID" | "GITHUB_APP_PRIVATE_KEY">,
   db: Db,
   message: WorkflowJobMessage,
+  lookup: InstallationLookup,
 ): Promise<WorkflowJobMessage> {
   const { job, installationId } = message;
   if (message.action !== "completed" || job.conclusion !== "cancelled") return message;
-  if (!job.runnerName || !installationId || !(await findInstallation(db, installationId)))
-    return message;
+  if (!job.runnerName || !installationId || !lookup.installation) return message;
   try {
     const token = await appInstallationToken(env, installationId);
     const annotations = await jobAnnotations(token, message.repository.fullName, job.id);
@@ -209,9 +209,13 @@ export async function withTimeout(
  * Runs page shows while a run is live; every report reads finished rows only. Skipped when the
  * installation has no row yet.
  */
-export async function recordJobTiming(db: Db, message: WorkflowJobMessage): Promise<boolean> {
+export async function recordJobTiming(
+  db: Db,
+  message: WorkflowJobMessage,
+  lookup: InstallationLookup,
+): Promise<boolean> {
   const { installationId, repository } = message;
-  if (!installationId || !(await findInstallation(db, installationId))) return false;
+  if (!installationId || !lookup.installation) return false;
   // An ingress that predates the parser's fix passes GitHub's "" for "no runner" through.
   const job = {
     ...message.job,

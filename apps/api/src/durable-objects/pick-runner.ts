@@ -25,7 +25,7 @@ import { RELAYRUNNER_LABEL } from "../labels.ts";
 import { eq } from "drizzle-orm";
 import { createDb, schema } from "../db/index.ts";
 import { recordPick, type PickRecord } from "../route-decisions.ts";
-import { installationRunnerScope } from "../installations.ts";
+import { findInstallationAndWorkspace, installationRunnerScope } from "../installations.ts";
 import { findRepo } from "../repositories.ts";
 import { retryOf } from "../retries.ts";
 import { startedJobStatus } from "../jobs.ts";
@@ -131,8 +131,10 @@ export class PickRunner extends DurableObject<Env> {
     let runnerId: number | undefined;
     let client: RunnerClient | undefined;
     try {
-      token = await appInstallationToken(this.env, work.installationId);
-      scope = await installationRunnerScope(createDb(this.env.DB), work.installationId, work.repo);
+      [token, scope] = await Promise.all([
+        appInstallationToken(this.env, work.installationId),
+        installationRunnerScope(createDb(this.env.DB), work.installationId, work.repo),
+      ]);
       // A replacement runner first makes sure its job still needs one.
       if (attempt > 1 && (await this.jobStatus(token, work)) !== "queued") {
         console.log(
@@ -410,18 +412,13 @@ async function pickRunner(
       runner: null,
       reason: `${NO_RUNNER}: RelayRunner couldn't read this job's repository and run.`,
     };
-  let context = await resolveTriggeredBy(token, parsed);
   const db = createDb(env.DB);
-  const [installation] = await db
-    .select({
-      workspaceId: schema.workspace.id,
-      suspendedAt: schema.githubInstallation.suspendedAt,
-    })
-    .from(schema.githubInstallation)
-    .innerJoin(schema.workspace, eq(schema.workspace.installationId, schema.githubInstallation.id))
-    .where(eq(schema.githubInstallation.id, installationId))
-    .limit(1);
-  if (!installation)
+  // The GitHub lookup and the installation read don't depend on each other.
+  let [context, { installation, workspaceId }] = await Promise.all([
+    resolveTriggeredBy(token, parsed),
+    findInstallationAndWorkspace(db, installationId),
+  ]);
+  if (!installation || !workspaceId)
     return {
       runner: null,
       reason: `${NO_RUNNER}: RelayRunner hasn't set up a workspace for this GitHub App installation yet.`,
@@ -434,7 +431,6 @@ async function pickRunner(
       reason: `${NO_RUNNER}: this GitHub App installation is suspended.`,
       repo: context.repo,
     };
-  const workspaceId = installation.workspaceId;
   const repo = await findRepo(db, installationId, context.repo);
   if (!repo) {
     const reason = `${NO_RUNNER}: RelayRunner doesn't have access to ${context.repo}.`;

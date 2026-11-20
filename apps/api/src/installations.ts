@@ -1,4 +1,4 @@
-import { and, count, eq, isNull, lte, or } from "drizzle-orm";
+import { and, eq, isNull, lte, or } from "drizzle-orm";
 import type { Auth } from "./auth.ts";
 import { type Db, schema } from "./db/index.ts";
 import type { GitHubInstallation } from "./github.ts";
@@ -85,6 +85,29 @@ export async function workspaceIdForInstallation(db: Db, installationId: number)
   return row?.id ?? null;
 }
 
+/**
+ * An installation's row and its workspace's id, in one query, for code that needs both. A workspace
+ * can't outlive its installation (workspace.installation_id cascades), so a missing installation
+ * means no workspace either.
+ */
+export async function findInstallationAndWorkspace(
+  db: Db,
+  installationId: number,
+): Promise<InstallationLookup> {
+  const [row] = await db
+    .select({ installation: schema.githubInstallation, workspaceId: schema.workspace.id })
+    .from(schema.githubInstallation)
+    .leftJoin(schema.workspace, eq(schema.workspace.installationId, schema.githubInstallation.id))
+    .where(eq(schema.githubInstallation.id, installationId))
+    .limit(1);
+  return { installation: row?.installation ?? null, workspaceId: row?.workspaceId ?? null };
+}
+
+export type InstallationLookup = {
+  installation: typeof schema.githubInstallation.$inferSelect | null;
+  workspaceId: string | null;
+};
+
 export async function findInstallation(db: Db, installationId: number) {
   const [row] = await db
     .select()
@@ -126,15 +149,6 @@ export async function isWorkspaceMember(db: Db, workspaceId: string, userId: str
     )
     .limit(1);
   return row ?? null;
-}
-
-/** How many people are in a workspace, for the CLI to know whether sharing is worth asking about. */
-export async function workspaceMemberCount(db: Db, workspaceId: string) {
-  const [row] = await db
-    .select({ members: count() })
-    .from(schema.workspaceMember)
-    .where(eq(schema.workspaceMember.workspaceId, workspaceId));
-  return row?.members ?? 0;
 }
 
 /**
