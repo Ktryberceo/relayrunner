@@ -13,6 +13,8 @@ import { checkPrices } from "./price-check.ts";
 import { purgeExpiredAiAnswers, purgeOldActivity } from "./retention.ts";
 import { purgeOldWorkflowRuns } from "./runs.ts";
 import { releasesToken, syncRunnerReleases } from "./runner-releases.ts";
+import { runCronTasks, sendHealthAlerts } from "./health-issues.ts";
+import { checkIntegrations, emailWorkspaceAdmins } from "./integration-issues.ts";
 import { sweepPicks } from "./pick-sweep.ts";
 import { enqueueSignalRollups } from "./signals.ts";
 import { sweepProviderHealth } from "./provider-health.ts";
@@ -68,38 +70,42 @@ export default {
   // provider account and drop its old usage (src/provider-sync.ts), drop expired cached AI
   // answers (src/retention.ts), and queue each installation's
   // signals (src/signals.ts), and save new actions/runner releases (src/runner-releases.ts). Daily: check providers' price pages
-  // (src/price-check.ts). Each runs even if another throws; a failure still fails the invocation.
+  // (src/price-check.ts).
   async scheduled(controller, env) {
     const at = new Date(controller.scheduledTime);
-    const tasks =
-      controller.cron === USAGE_CRON
-        ? [
-            pollActionsUsage(env, at),
-            sweepPicks(env),
-            sendOperatorPings(env, at),
-            sendProductEvents(env, at),
-            sweepProviderHealth(env, at.getTime()),
-          ]
-        : controller.cron === PRICE_CRON
-          ? [checkPrices(env, at)]
-          : [
-              checkDeadLetterGrowth(env),
-              purgeOldJobTimings(createDb(env.DB)),
-              purgeOldWorkflowRuns(createDb(env.DB)),
-              purgeOldActivity(createDb(env.DB)),
-              syncSpendInstallations(env, at),
-              syncEnterpriseInstallations(env, createDb(env.DB), at),
-              syncProviderConnections(env),
-              purgeOldProviderUsage(createDb(env.DB), at),
-              purgeExpiredAiAnswers(createDb(env.DB), at.getTime()),
-              enqueueSignalRollups(env),
-              releasesToken(env, createDb(env.DB)).then((token) =>
-                syncRunnerReleases(createDb(env.DB), token),
-              ),
-            ];
-    const results = await Promise.allSettled(tasks);
-    const failed = results.find((result) => result.status === "rejected");
-    if (failed) throw failed.reason;
+    const db = createDb(env.DB);
+    const tasks: Record<string, Promise<unknown>> = controller.cron === USAGE_CRON
+      ? {
+          pollActionsUsage: pollActionsUsage(env, at),
+          sweepPicks: sweepPicks(env),
+          sendOperatorPings: sendOperatorPings(env, at),
+          sendProductEvents: sendProductEvents(env, at),
+          sweepProviderHealth: sweepProviderHealth(env, at.getTime()),
+          sendHealthAlerts: sendHealthAlerts(env, at).then((alerts) =>
+            emailWorkspaceAdmins(env, db, alerts),
+          ),
+        }
+      : controller.cron === PRICE_CRON
+        ? { checkPrices: checkPrices(env, at) }
+        : {
+            checkDeadLetterGrowth: checkDeadLetterGrowth(env),
+            purgeOldJobTimings: purgeOldJobTimings(db),
+            purgeOldWorkflowRuns: purgeOldWorkflowRuns(db),
+            purgeOldActivity: purgeOldActivity(db),
+            syncSpendInstallations: syncSpendInstallations(env, at),
+            syncEnterpriseInstallations: syncEnterpriseInstallations(env, db, at),
+            syncProviderConnections: syncProviderConnections(env),
+            purgeOldProviderUsage: purgeOldProviderUsage(db, at),
+            purgeExpiredAiAnswers: purgeExpiredAiAnswers(db, at.getTime()),
+            enqueueSignalRollups: enqueueSignalRollups(env),
+            checkIntegrations: checkIntegrations(env, db, at),
+            syncRunnerReleases: releasesToken(env, db).then((token) =>
+              syncRunnerReleases(db, token),
+            ),
+          };
+    // Each runs even if another throws; a failure still fails the invocation, and one that keeps
+    // failing reaches operators (src/health-issues.ts).
+    await runCronTasks(db, tasks);
   },
 } satisfies ExportedHandler<
   Env,

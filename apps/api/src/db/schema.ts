@@ -1753,3 +1753,30 @@ export const jobType = sqliteTable(
     primaryKey({ columns: [table.workspaceId, table.repositoryId, table.workflow, table.job] }),
   ],
 );
+
+// Something that keeps failing and that someone should hear about (src/health-issues.ts): a cron
+// task, an installation's queued task, or a workspace's broken integration. One row per
+// thing, by `key`. It opens on a failure and clears on the next success; alerts go out when it
+// passes its threshold, twice more over the next week while it stays open, and when it clears.
+export const healthIssue = sqliteTable(
+  "health_issue",
+  {
+    // What failed, e.g. "cron:syncRunnerReleases", "task:signals:<installation id>" or
+    // "integration:app-suspended:<workspace id>".
+    key: text("key").primaryKey(),
+    // A HEALTH_ISSUE_KINDS id: "cron", "task" or "integration".
+    kind: text("kind").notNull(),
+    // The latest error, cut short, or what's wrong with an integration.
+    error: text("error").notNull(),
+    // Failures in a row since the last success.
+    failures: integer("failures").notNull(),
+    firstFailedAt: integer("first_failed_at", { mode: "timestamp_ms" }).notNull(),
+    // Set by the first success after failures; the row is deleted once that's been told.
+    clearedAt: integer("cleared_at", { mode: "timestamp_ms" }),
+    // How many times this run of failures was told, and when last. Null until it passed its
+    // threshold.
+    alerts: integer("alerts").notNull().default(0),
+    alertedAt: integer("alerted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [index("health_issue_kind_idx").on(table.kind)],
+);
