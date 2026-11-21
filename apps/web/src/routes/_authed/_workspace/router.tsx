@@ -419,6 +419,7 @@ function sampleRouter(): {
     latchkey: 27.5,
     celesto: 2.05,
     instabox: 11.6,
+    groundbox: 5.4,
   };
   if (kind === "default")
     return {
