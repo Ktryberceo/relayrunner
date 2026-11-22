@@ -101,7 +101,7 @@ const QUIRKS: Partial<Record<IntegrationId, Quirks>> = {
       },
       {
         q: "Does Groundbox run macOS jobs?",
-        a: "Yes: runs-on groundbox-macos gets a fresh macOS VM per job, 12 vCPU on Apple silicon M6 with 12 GB of memory, macOS 26 Tahoe and Xcode 27.2. It's $0.05 a minute, billed per second, and paid from credit, since free plan minutes don't cover macOS.",
+        a: "Yes: runs-on groundbox-macos gets a fresh macOS VM per job, 12 vCPU on Apple silicon M6 with 12 GB of memory, macOS 26 Tahoe and Xcode 27.2. It's $0.05 a minute, billed per second. On the free plan a macOS minute uses 15 free minutes.",
       },
     ],
   },

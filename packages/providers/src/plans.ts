@@ -291,7 +291,7 @@ export const PLANS: Partial<Record<ProviderId, ProviderPlans>> = {
       },
       { name: "Paid", feeUsd: 20, included: "$20 usage a month", limits: "Jobs up to 6 hours" },
     ],
-    note: "Minutes count in 2 vCPU minutes, so a 4 vCPU minute uses 2. Usage past the plan's is pay as you go, billed per second, and Paid is also $200 a year. Linux x64 and macOS, in public and private repos, for organizations and personal accounts. macOS is $0.05 a minute and paid from credit: free minutes don't cover it.",
+    note: "Minutes count in 2 vCPU minutes, so a 4 vCPU minute uses 2. Usage past the plan's is pay as you go, billed per second, and Paid is also $200 a year. Linux x64 and macOS, in public and private repos, for organizations and personal accounts. macOS is $0.05 a minute; on the Free plan a macOS minute uses 15 free minutes.",
     platforms: ["x64", "mac"],
     connectUrl: "https://app.groundbox.dev",
     source: "https://groundbox.dev/pricing",
