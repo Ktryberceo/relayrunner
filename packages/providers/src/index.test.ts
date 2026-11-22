@@ -29,6 +29,7 @@ describe("hosted provider labels", () => {
     ["groundbox-4vcpu-ubuntu-2404", "groundbox"],
     ["groundbox-flex-8vcpu", "groundbox"],
     ["groundbox-auto-web", "groundbox"],
+    ["groundbox-macos", "groundbox"],
     ["ubuntu-latest", null],
     ["self-hosted", null],
   ])("%s belongs to %s", (label, id) => {

@@ -49,6 +49,22 @@ describe("runnerCatalog", () => {
     expect(linux[1]).toMatchObject({ label: "depot-ubuntu-24.04-4", usd: 0.016 });
   });
 
+  test("lists Groundbox's one macOS runner, priced per runner", () => {
+    const macos = runnerCatalog(BASE_BOOK, "groundbox").find((row) => row.platform === "macos");
+    expect(macos?.runners).toEqual([
+      {
+        label: "groundbox-macos",
+        name: "groundbox-macos",
+        size: { vcpus: 12, memoryGb: 12 },
+        usd: 0.05,
+        larger: false,
+        note: "M6",
+      },
+    ]);
+    const row = RUNNER_TABLE_ROWS.find((row) => row.id === "groundbox");
+    expect(row?.cells.macos).toMatchObject({ label: "groundbox-macos", vcpus: 12, usd: 0.05 });
+  });
+
   test("lists nothing for a provider without list prices", () => {
     expect(runnerCatalog(BASE_BOOK, "namespace")).toEqual([]);
   });
