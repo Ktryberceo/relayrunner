@@ -14,12 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { getActionsUsage, type AccountUsage } from "@/lib/actions-usage";
-import {
-  sampleAutoJobs,
-  sampleRouterAccounts,
-  sampleRouterSetup,
-  sampleRunnerGroupCheck,
-} from "@/lib/router-sample";
+import { sampleRouterAccounts } from "@/lib/router-sample";
 import { type AutoJob, type AutoJobs, getAutoJobs, setAutoJob, setAutoSize } from "@/lib/auto-jobs";
 import { AUTO_SIZES } from "@relayrunner/providers";
 import {
@@ -239,9 +234,8 @@ function useProviderHealth(workspaceId: string) {
   const [health, setHealth] = useState<ProviderHealth | null>(null);
   useEffect(() => {
     let live = true;
-    // The dev preview has no API behind it: `?sample=unhealthy` shows one skipped runner type.
-    const read = authDisabled ? sampleHealth() : getProviderHealth(workspaceId);
-    read.then(
+    // In the dev preview, `?sample=unhealthy` shows one skipped runner type (lib/sample).
+    getProviderHealth(workspaceId).then(
       (loaded) => live && setHealth(loaded),
       () => undefined,
     );
@@ -251,12 +245,12 @@ function useProviderHealth(workspaceId: string) {
   }, [workspaceId]);
 
   async function tryAgain(runner: UnhealthyRunner) {
-    if (!authDisabled) await clearUnhealthyRunner(workspaceId, runner);
+    await clearUnhealthyRunner(workspaceId, runner);
     setHealth((h) => h && { ...h, unhealthy: h.unhealthy.filter((r) => r !== runner) });
   }
 
   async function setEnabled(enabled: boolean) {
-    if (!authDisabled) await setSkipUnhealthy(workspaceId, enabled);
+    await setSkipUnhealthy(workspaceId, enabled);
     setHealth((h) => h && { ...h, enabled });
   }
 
@@ -363,17 +357,6 @@ function SkipUnhealthyToggle({
       </span>
     </label>
   );
-}
-
-async function sampleHealth(): Promise<ProviderHealth> {
-  if (new URLSearchParams(window.location.search).get("sample") !== "unhealthy")
-    return { enabled: true, unhealthy: [] };
-  return {
-    enabled: true,
-    unhealthy: [
-      { key: "depot", label: "depot-ubuntu-24.04", misses: 3, retryAt: Date.now() + 8 * 60_000 },
-    ],
-  };
 }
 
 /**
@@ -492,11 +475,7 @@ function sampleRouter(): {
 function useRouterSetup(workspaceId: string, poll: boolean) {
   const [setup, setSetup] = useState<RouterSetup | null>(null);
   const load = useCallback(
-    () =>
-      (authDisabled ? Promise.resolve(sampleRouterSetup()) : getRouterSetup(workspaceId)).then(
-        setSetup,
-        () => undefined,
-      ),
+    () => getRouterSetup(workspaceId).then(setSetup, () => undefined),
     [workspaceId],
   );
   useEffect(() => {
@@ -514,10 +493,7 @@ function useRunnerGroupCheck(workspaceId: string, open: boolean) {
   useEffect(() => {
     if (!open || asked.current) return;
     asked.current = true;
-    (authDisabled
-      ? Promise.resolve(sampleRunnerGroupCheck())
-      : getRunnerGroupCheck(workspaceId)
-    ).then(setCheck, () => undefined);
+    getRunnerGroupCheck(workspaceId).then(setCheck, () => undefined);
   }, [workspaceId, open]);
   return check;
 }
@@ -528,7 +504,7 @@ function useAutoJobs(workspaceId: string) {
   const [jobs, setJobs] = useState<AutoJobs | null>(null);
   useEffect(() => {
     let live = true;
-    (authDisabled ? Promise.resolve(sampleAutoJobs()) : getAutoJobs(workspaceId)).then(
+    getAutoJobs(workspaceId).then(
       (loaded) => live && setJobs(loaded),
       () => undefined,
     );
@@ -548,14 +524,14 @@ function useAutoJobs(workspaceId: string) {
       );
     update(setting);
     try {
-      if (!authDisabled) await setAutoJob(workspaceId, job.id, setting);
+      await setAutoJob(workspaceId, job.id, setting);
     } catch {
       update(job);
     }
   }
 
   async function setSize(size: number) {
-    if (!authDisabled) await setAutoSize(workspaceId, size);
+    await setAutoSize(workspaceId, size);
     setJobs((j) => j && { ...j, size });
   }
 
