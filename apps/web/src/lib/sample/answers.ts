@@ -7,6 +7,7 @@ import {
   SAMPLE_HISTORY_WORKFLOWS,
   SAMPLE_WORKFLOWS,
   sampleEvaluation,
+  sampleEvaluations,
 } from "@/lib/evaluations";
 import { BASE_CATALOG } from "@relayrunner/providers/catalog";
 import { DEFAULT_RETRY_SETTINGS, type FreeMinutesProvider } from "@relayrunner/runner-order";
@@ -96,6 +97,14 @@ const ANSWERS: [RegExp, Answer][] = [
     () => ({ history: sampleParam() === "history" ? { state: "running", runs: 142 } : null }),
   ],
   [/^\/evaluations$/, () => ({ evaluations: [] })],
+  // `?sample=none` on a provider page: no recent evaluations.
+  [
+    /^\/evaluations\/recent$/,
+    (_, q) => ({
+      evaluations:
+        sampleParam() === "none" ? [] : sampleEvaluations(q.get("provider") ?? "blacksmith"),
+    }),
+  ],
   [/^\/evaluations\/([^/]+)$/, ([, id]) => sampleEvaluationById(decodeURIComponent(id!))],
   [/^\/providers\/catalog$/, () => ({ providers: BASE_CATALOG })],
   [/^\/providers\/connections$/, () => sampleRouterConnections()],
@@ -219,6 +228,12 @@ function sampleEvaluationById(id: string) {
   const [, provider = "blacksmith", state] = id.split(":");
   if (state === "waiting") return sampleEvaluation(provider, 0, "waiting");
   if (state === "done") return sampleEvaluation(provider, EVALUATION_RUNS);
+  if (state === "old")
+    return {
+      ...sampleEvaluation(provider, EVALUATION_RUNS),
+      createdAt: Date.now() - 41 * 86_400_000,
+      routedRuns: sampleParam() === "unused" ? 0 : 128,
+    };
   if (state === "first") return sampleEvaluation(provider, 0);
   if (state?.startsWith("stopped-"))
     return sampleEvaluation(provider, Number(state.slice(8)) || 0, undefined, true);
