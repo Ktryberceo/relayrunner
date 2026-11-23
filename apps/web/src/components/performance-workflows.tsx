@@ -56,7 +56,7 @@ export function Change({ pct, className }: { pct: number | null; className?: str
 
 /** The runners a workflow ran on, as marks, `max` of them and "+N" for the rest. */
 function RunnerMarks({ keys, environments }: { keys: string[]; environments: Environment[] }) {
-  const max = 3;
+  const max = 4;
   const byKey = new Map(environments.map((env) => [env.key, env]));
   return (
     <span className="flex items-center gap-2">
@@ -127,29 +127,9 @@ const columns = column.columns([
     meta: {
       align: "end",
       className: "font-semibold whitespace-nowrap",
-      info: (
-        <p>
-          From the start of a run to its last job finishing, over successful runs. It includes time
-          jobs spent waiting for a runner.
-        </p>
-      ),
+      info: <MedianInfo />,
     },
-    cell: ({ row: { original } }) => (original.wall ? medianText(original.wall) : "—"),
-  }),
-  column.accessor((row) => row.wall?.trend ?? undefined, {
-    id: "trend",
-    header: "vs before",
-    sortFn: "basic",
-    sortDescFirst: true,
-    meta: {
-      hideOnPhone: true,
-      className: "whitespace-nowrap",
-      info: <TrendInfo />,
-    },
-    cell: ({ getValue }) => {
-      const trend = getValue();
-      return <Change pct={trend === undefined ? null : Math.round(trend * 100)} />;
-    },
+    cell: ({ row: { original } }) => <MedianCell row={original} />,
   }),
   column.accessor((row) => row.wall?.waitMs ?? undefined, {
     id: "waiting",
@@ -219,15 +199,31 @@ const columns = column.columns([
   }),
 ]);
 
-const columnsWithoutTrend = columns.filter((each) => each.id !== "trend");
-
-function TrendInfo() {
+function MedianInfo() {
   const { range } = useContext();
   return (
-    <p>
-      The median against {trendPhrase(range)}. ▲ means the workflow got slower, ▼ that it got
-      faster.
-    </p>
+    <>
+      <p>
+        From the start of a run to its last job finishing, over successful runs. It includes time
+        jobs spent waiting for a runner.
+      </p>
+      <p>After it, the change against {trendPhrase(range)}: ▲ slower, ▼ faster.</p>
+    </>
+  );
+}
+
+/** The median with its change against the stretch before, when there is one. */
+function MedianCell({ row }: { row: Row }) {
+  if (!row.wall) return <>—</>;
+  const trend = row.wall.trend;
+  return (
+    <span className="inline-flex items-center gap-2">
+      {medianText(row.wall)}
+      {/* A fixed width, so the changes line up down the column. */}
+      <span className="inline-flex w-12 items-center">
+        {trend !== null && <Change pct={Math.round(trend * 100)} className="text-xs font-normal" />}
+      </span>
+    </span>
   );
 }
 
@@ -239,11 +235,12 @@ function WorkflowCell({ row }: { row: Row }) {
       <Link
         to="/performance/workflow"
         search={{ repo: row.repositoryId, workflow: row.workflow ?? undefined, range }}
-        className="block w-fit font-medium whitespace-nowrap outline-none after:absolute after:inset-0 hover:underline hover:underline-offset-2 focus-visible:after:ring-2 focus-visible:after:ring-ring"
+        title={row.workflow ?? undefined}
+        className="block w-fit max-w-56 truncate font-medium outline-none after:absolute after:inset-0 hover:underline hover:underline-offset-2 focus-visible:after:ring-2 focus-visible:after:ring-ring"
       >
         {row.workflow ?? "Unnamed workflow"}
       </Link>
-      <span className="block text-xs whitespace-nowrap text-muted-foreground">
+      <span className="block max-w-56 truncate text-xs text-muted-foreground">
         {showRepository && `${row.repository} · `}
         {plural(row.jobs.length, "job")}
       </span>
@@ -271,7 +268,7 @@ function FastestCell({ row }: { row: Row }) {
   };
   return (
     <span className="flex items-center gap-2">
-      <span className="max-w-28 truncate" title={runnerTitle(env)}>
+      <span className="max-w-40 truncate" title={runnerTitle(env)}>
         {runnerTitle(env)}
       </span>
       <Change pct={Math.round((ratio - 1) * 100)} />
@@ -357,7 +354,7 @@ export const PerformanceWorkflows = memo(function PerformanceWorkflows({
       <div className="min-w-0 sm:[&_td]:px-3 sm:[&_th]:px-3">
         <Context value={context}>
           <DataTable
-            columns={report.trend ? columns : columnsWithoutTrend}
+            columns={columns}
             data={rows}
             getRowId={(row) => row.id}
             initialSorting={[{ id: "runs", desc: true }]}
