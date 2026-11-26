@@ -311,6 +311,17 @@ export const BASE_PRICES: PriceRow[] = [
   { provider: "groundbox", rate: "groundbox-flex-4vcpu", usd: 0.003, from: "2026-11-21" },
   { provider: "groundbox", rate: "groundbox-flex-8vcpu", usd: 0.0055, from: "2026-11-21" },
   { provider: "groundbox", rate: "groundbox-flex-16vcpu", usd: 0.0105, from: "2026-11-21" },
+  // From December 1, 2026: 2vcpu $0.0035, 4vcpu $0.007, 8vcpu $0.013, 16vcpu $0.0245; flex half
+  // that. Groundbox teams made before then keep the earlier prices until March 1, 2027.
+  // https://groundbox.dev/docs/ci.md
+  { provider: "groundbox", rate: "groundbox-2vcpu", usd: 0.0035, from: "2026-12-01" },
+  { provider: "groundbox", rate: "groundbox-4vcpu", usd: 0.007, from: "2026-12-01" },
+  { provider: "groundbox", rate: "groundbox-8vcpu", usd: 0.013, from: "2026-12-01" },
+  { provider: "groundbox", rate: "groundbox-16vcpu", usd: 0.0245, from: "2026-12-01" },
+  { provider: "groundbox", rate: "groundbox-flex-2vcpu", usd: 0.00175, from: "2026-12-01" },
+  { provider: "groundbox", rate: "groundbox-flex-4vcpu", usd: 0.0035, from: "2026-12-01" },
+  { provider: "groundbox", rate: "groundbox-flex-8vcpu", usd: 0.0065, from: "2026-12-01" },
+  { provider: "groundbox", rate: "groundbox-flex-16vcpu", usd: 0.01225, from: "2026-12-01" },
   // Groundbox macOS: $0.05 a minute, one size (12 vCPU M6, 12 GB). https://groundbox.dev/macos-ci
   { provider: "groundbox", rate: "macos", usd: 0.05, from: "2026-11-22" },
   // Groundbox Windows Server 2025: per minute 2vcpu (2/8) $0.006, 4vcpu (4/16) $0.012, 8vcpu (8/32)
@@ -319,6 +330,11 @@ export const BASE_PRICES: PriceRow[] = [
   { provider: "groundbox", rate: "groundbox-windows-4vcpu", usd: 0.012, from: "2026-11-22" },
   { provider: "groundbox", rate: "groundbox-windows-8vcpu", usd: 0.022, from: "2026-11-22" },
   { provider: "groundbox", rate: "groundbox-windows-16vcpu", usd: 0.042, from: "2026-11-22" },
+  // From December 1, 2026: 2vcpu $0.007, 4vcpu $0.014, 8vcpu $0.026, 16vcpu $0.049 (twice Linux).
+  { provider: "groundbox", rate: "groundbox-windows-2vcpu", usd: 0.007, from: "2026-12-01" },
+  { provider: "groundbox", rate: "groundbox-windows-4vcpu", usd: 0.014, from: "2026-12-01" },
+  { provider: "groundbox", rate: "groundbox-windows-8vcpu", usd: 0.026, from: "2026-12-01" },
+  { provider: "groundbox", rate: "groundbox-windows-16vcpu", usd: 0.049, from: "2026-12-01" },
   // GitHub, in a private repo; standard runners are free in public ones.
   // https://docs.github.com/en/billing/reference/actions-runner-pricing
   { provider: "github", rate: "linux-1-core", usd: 0.002, from: "2026-11-11" },

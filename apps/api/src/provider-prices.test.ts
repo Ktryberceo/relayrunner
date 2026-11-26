@@ -53,6 +53,14 @@ describe("list prices", () => {
       0.00125,
       6,
     );
+    // Groundbox's Linux and Windows prices went up on 2026-12-01; macOS didn't change.
+    const nov30 = Date.parse("2026-11-30T23:59:59Z");
+    const dec1 = Date.parse("2026-12-01T00:00:00Z");
+    expect(rate("groundbox", "groundbox-4vcpu", nov30)).toBeCloseTo(0.006, 6);
+    expect(rate("groundbox", "groundbox-4vcpu", dec1)).toBeCloseTo(0.007, 6);
+    expect(rate("groundbox", "groundbox-flex-16vcpu", dec1)).toBeCloseTo(0.01225, 6);
+    expect(rate("groundbox", "groundbox-windows-8vcpu", dec1)).toBeCloseTo(0.026, 6);
+    expect(rate("groundbox", "groundbox-macos", dec1)).toBeCloseTo(0.05, 6);
     // Before the oldest known price, that price still holds.
     expect(rate("ubicloud", "ubicloud", Date.parse("2020-01-01"))).toBeCloseTo(0.0008, 6);
     expect(githubRate(BASE_BOOK, "linux-arm-2-core", Date.parse("2020-01-01"))).toBe(0.005);
