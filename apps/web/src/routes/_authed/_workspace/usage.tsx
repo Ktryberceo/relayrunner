@@ -26,7 +26,10 @@ import {
   minutes,
   money,
   type UsageReport,
+  type UsageRow,
 } from "@/lib/usage";
+import { ExportMenu } from "@/components/export-menu";
+import type { ExportColumn } from "@/lib/table-export";
 
 // As far back as the API keeps jobs, starting on this month since GitHub's included minutes reset
 // on the first.
@@ -175,6 +178,11 @@ function Overview({ loaded }: { loaded: UsageData }) {
 
           <Table
             caption="By runner"
+            exportAs={{
+              name: "usage-by-runner",
+              rows: report.byRunner,
+              columns: RUNNER_EXPORT_COLUMNS,
+            }}
             head={["Runner", "Jobs", "Under a minute", "Billed min", "Short-job cost", "Total"]}
             hideOnPhone={[1, 3, 5]}
             rows={report.byRunner.map((row) => [
@@ -194,6 +202,11 @@ function Overview({ loaded }: { loaded: UsageData }) {
 
           <Table
             caption="Repositories with the most short-job cost"
+            exportAs={{
+              name: "usage-by-repo",
+              rows: report.byRepository,
+              columns: REPOSITORY_EXPORT_COLUMNS,
+            }}
             head={["Repository", "Jobs", "Under a minute", "Short-job cost"]}
             hideOnPhone={[1]}
             rows={report.byRepository.map((repo) => [
@@ -284,22 +297,59 @@ function RepoName({ repository, isPrivate }: { repository: string; isPrivate: bo
   );
 }
 
-/** A captioned table. Columns whose index is in `hideOnPhone` show from the sm breakpoint up. */
-function Table({
+// The usage tables' exports, with money in USD.
+const RUNNER_EXPORT_COLUMNS: ExportColumn<UsageRow>[] = [
+  { header: "Runner", value: (row) => row.label },
+  { header: "Rate (USD/min)", value: (row) => row.perMinute },
+  { header: "Jobs", value: (row) => row.jobs },
+  { header: "Under a minute", value: (row) => row.shortJobs },
+  { header: "Run minutes", value: (row) => Math.round(row.runSeconds / 6) / 10 },
+  { header: "Billed minutes", value: (row) => row.billedMinutes },
+  { header: "Short-job cost (USD)", value: (row) => row.shortCost },
+  { header: "Rounding cost (USD)", value: (row) => row.roundingCost },
+  { header: "Total (USD)", value: (row) => row.cost },
+];
+const REPOSITORY_EXPORT_COLUMNS: ExportColumn<UsageReport["byRepository"][number]>[] = [
+  { header: "Repo", value: (row) => row.repository },
+  { header: "Public", value: (row) => row.private === false },
+  { header: "Jobs", value: (row) => row.jobs },
+  { header: "Under a minute", value: (row) => row.shortJobs },
+  { header: "Short-job cost (USD)", value: (row) => row.shortCost },
+];
+
+/**
+ * A captioned table, with an Export menu for `exportAs.rows` beside its caption. Columns whose
+ * index is in `hideOnPhone` show from the sm breakpoint up.
+ */
+function Table<TData>({
   caption,
+  exportAs,
   head,
   rows,
   hideOnPhone = [],
 }: {
   caption: string;
+  exportAs?: { name: string; rows: TData[]; columns: ExportColumn<TData>[] };
   head: string[];
   rows: ReactNode[][];
   hideOnPhone?: number[];
 }) {
   return (
     <div className="overflow-x-auto rounded-xl border bg-card">
+      <div className="flex items-center justify-between gap-3 px-3 pt-3 pb-2 sm:px-4">
+        <h3 className="font-semibold">{caption}</h3>
+        {exportAs && (
+          <div className="-my-1.5 -mr-2">
+            <ExportMenu
+              name={exportAs.name}
+              rows={() => exportAs.rows}
+              columns={exportAs.columns}
+            />
+          </div>
+        )}
+      </div>
       <table className="w-full text-sm">
-        <caption className="px-3 pt-3 pb-2 text-left font-semibold sm:px-4">{caption}</caption>
+        <caption className="sr-only">{caption}</caption>
         <thead>
           <tr className="border-b text-muted-foreground">
             {head.map((cell, i) => (
