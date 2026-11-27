@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  priceAt,
   HOSTED_PROVIDER_IDS,
   hostedProviderOf,
   isProviderLabel,
@@ -68,5 +69,24 @@ describe("provider GitHub Apps", () => {
   test("no provider apps, no providers", () => {
     expect(providersOfAppSlugs([])).toEqual([]);
     expect(providersOfAppSlugs(["relayrunner", "dependabot"])).toEqual([]);
+  });
+});
+
+describe("priceAt", () => {
+  const history = [
+    { usd: 1, from: "2026-11-01" },
+    { usd: 2, from: "2026-12-01" },
+  ];
+  const nov30 = Date.parse("2026-11-30T23:59:59Z");
+  const dec1 = Date.parse("2026-12-01T00:00:00Z");
+
+  test("uses a row from the start of its UTC day, and only then", () => {
+    expect(priceAt(history, nov30)?.usd).toBe(1);
+    expect(priceAt(history, dec1)?.usd).toBe(2);
+  });
+
+  test("lets the oldest row cover earlier days", () => {
+    expect(priceAt(history, Date.parse("2020-01-01"))?.usd).toBe(1);
+    expect(priceAt([], dec1)).toBeUndefined();
   });
 });

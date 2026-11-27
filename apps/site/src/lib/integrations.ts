@@ -6,6 +6,7 @@ import {
   BILLING_PROVIDERS,
   HOSTED_PROVIDER_IDS,
   isBillingProvider,
+  priceAt,
   PROVIDERS,
   rateName,
   ratePrices,
@@ -158,7 +159,7 @@ export interface Integration {
   setup: string;
   docsUrl?: string;
   dashboardUrl?: string;
-  /** The latest list price of each rate, such as { name: "Linux", price: "$0.004/min per vCPU" }. */
+  /** Each rate's list price on the day the site was built, such as { name: "Linux", price: "$0.004/min per vCPU" }. */
   prices: { name: string; price: string }[];
   /** How to connect its billing, for the providers whose real spend the dashboard can read. */
   billing?: BillingProviderInfo;
@@ -168,9 +169,10 @@ export interface Integration {
 export function integration(id: IntegrationId): Integration {
   const { name, summary, labels, example, setup, docsUrl, dashboardUrl } = PROVIDERS[id];
   const prices = ratePrices(BASE_BOOK, id).flatMap(({ rate, per, history }) => {
-    const latest = history.at(-1);
-    if (!latest) return [];
-    const price = rateText(latest.usd);
+    // The price on the day the site was built; a dated row that hasn't started isn't shown.
+    const today = priceAt(history);
+    if (!today) return [];
+    const price = rateText(today.usd);
     return [{ name: rateName(rate), price: per === "vcpu" ? `${price} per vCPU` : price }];
   });
   return {

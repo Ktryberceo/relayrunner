@@ -388,6 +388,7 @@ export {
   BASE_BOOK,
   BASE_PRICES,
   dayMs,
+  priceAt,
   GITHUB_LABELS,
   type GitHubRunner,
   githubRate,

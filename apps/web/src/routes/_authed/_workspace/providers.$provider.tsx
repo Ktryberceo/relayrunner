@@ -1,4 +1,4 @@
-import { dayMs, providerPlans, type RatePrices } from "@relayrunner/providers";
+import { dayMs, priceAt, providerPlans, type RatePrices } from "@relayrunner/providers";
 import { isFreeMinutesProvider } from "@relayrunner/runner-order";
 import { Count } from "@/components/count";
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
@@ -515,7 +515,7 @@ function Prices({ prices }: { prices: RatePrices[] }) {
         <table className="w-full text-sm">
           <tbody>
             {prices.map(({ rate, per, history }) => {
-              const today = history.findLast((row, i) => i === 0 || dayMs(row.from) <= now);
+              const today = priceAt(history, now);
               return (
                 <tr key={rate} className="border-b last:border-0">
                   <td className="px-3 py-2.5 sm:px-4">{rateName(rate)}</td>
@@ -539,6 +539,7 @@ function Prices({ prices }: { prices: RatePrices[] }) {
  */
 function PriceChanges({ prices }: { prices: RatePrices[] }) {
   if (prices.length === 0) return null;
+  const now = Date.now();
   const changes = prices
     .flatMap(({ rate, history }) =>
       history.slice(1).map((row, i) => ({
@@ -547,6 +548,8 @@ function PriceChanges({ prices }: { prices: RatePrices[] }) {
         text: `${rateName(rate)}: ${rateText(history[i]!.usd)} to ${rateText(row.usd)}`,
       })),
     )
+    // A change shows from the day it takes effect, not before.
+    .filter((change) => dayMs(change.from) <= now)
     .sort((a, b) => b.from.localeCompare(a.from));
   return (
     <div className="grid max-w-3xl gap-2 text-sm text-muted-foreground">
