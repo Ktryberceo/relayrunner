@@ -283,6 +283,30 @@ const CHEVRON = "M6 9l6 6 6-6";
 </header>
 
 <script>
+  // Keep the menus under the header. They are popovers (in the top layer, placed against the
+  // viewport), and the header's bottom moves: the launch banner sits above it until it scrolls away.
+  const header = document.querySelector<HTMLElement>("[data-header]");
+  if (header) {
+    const place = () => {
+      const bottom = Math.max(0, header.getBoundingClientRect().bottom);
+      document.documentElement.style.setProperty("--header-bottom", `${bottom}px`);
+      // The desktop panels hang just under the nav items rather than the header's edge.
+      const trigger = header.querySelector(".nav-trigger");
+      if (trigger) {
+        const navBottom = Math.max(0, trigger.getBoundingClientRect().bottom);
+        document.documentElement.style.setProperty("--nav-bottom", `${navBottom}px`);
+      }
+    };
+    for (const popover of header.querySelectorAll<HTMLElement>("[popover]")) {
+      popover.addEventListener("beforetoggle", place);
+    }
+    const placeIfOpen = () => {
+      if (header.querySelector(":popover-open")) place();
+    };
+    addEventListener("scroll", placeIfOpen, { passive: true });
+    addEventListener("resize", placeIfOpen);
+  }
+
   // Open a menu when a mouse rests on its item, and close it shortly after the mouse leaves both
   // the item and its panel (the panel sits inside the item). Clicks, touch and keys work as before.
   const OPEN_DELAY = 80;
@@ -295,7 +319,14 @@ const CHEVRON = "M6 9l6 6 6-6";
     let hoverOpened = false;
     const later = (fn: () => void, ms: number) => {
       clearTimeout(timer);
-      timer = window.setTimeout(fn, ms);
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        fn();
+      }, ms);
+    };
+    const cancel = () => {
+      clearTimeout(timer);
+      timer = undefined;
     };
     item.addEventListener("pointerenter", (event) => {
       if (event.pointerType !== "mouse") return;
@@ -305,12 +336,35 @@ const CHEVRON = "M6 9l6 6 6-6";
         hoverOpened = true;
       }, OPEN_DELAY);
     });
-    item.addEventListener("pointerleave", (event) => {
-      if (event.pointerType !== "mouse") return;
+    // The strip between the item and the panel below it counts as the menu, so a slow move
+    // across that gap doesn't close it.
+    const inGap = (x: number, y: number) => {
+      if (!panel.matches(":popover-open")) return false;
+      const t = trigger.getBoundingClientRect();
+      const p = panel.getBoundingClientRect();
+      return (
+        y >= t.bottom - 2 &&
+        y <= p.top &&
+        x >= Math.min(t.left, p.left) &&
+        x <= Math.max(t.right, p.right)
+      );
+    };
+    const closeLater = () =>
       later(() => {
         if (hoverOpened && panel.matches(":popover-open")) panel.hidePopover();
         hoverOpened = false;
       }, CLOSE_DELAY);
+    item.addEventListener("pointerleave", (event) => {
+      if (event.pointerType !== "mouse") return;
+      if (hoverOpened && inGap(event.clientX, event.clientY)) cancel();
+      else closeLater();
+    });
+    // While the mouse is in the gap, wait; once it leaves the gap for anywhere else, close.
+    document.addEventListener("pointermove", (event) => {
+      if (event.pointerType !== "mouse" || !hoverOpened) return;
+      if (item.contains(event.target as Node)) return;
+      if (inGap(event.clientX, event.clientY)) cancel();
+      else if (timer === undefined) closeLater();
     });
     // A click on a menu the mouse already opened keeps it open instead of closing it.
     trigger.addEventListener("click", (event) => {
