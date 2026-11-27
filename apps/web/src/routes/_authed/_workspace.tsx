@@ -311,6 +311,8 @@ function WorkspaceLayout() {
         </div>
         <SiteFooter />
       </main>
+      {/* The panels keep a crash in their content to themselves; these boundaries catch their code
+          failing to load, such as after a deploy, which happens before the panel exists. */}
       {runner && (
         <SectionBoundary>
           <Suspense>

@@ -1,7 +1,7 @@
 import { dayMs, priceAt, providerPlans, type RatePrices } from "@relayrunner/providers";
 import { isFreeMinutesProvider } from "@relayrunner/runner-order";
 import { Count } from "@/components/count";
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeftIcon, ArrowUpRightIcon, FlaskConicalIcon } from "lucide-react";
 import { useState } from "react";
 import { IncludedMinutes } from "@/components/actions-minutes";
@@ -22,6 +22,8 @@ import { TimeRangePicker } from "@/components/range-picker";
 import { RunnerLink } from "@/components/runner-link";
 import { StatTile } from "@/components/stat-tile";
 import { RecentEvaluations, useRecentEvaluations } from "@/components/recent-evaluations";
+import { SectionBoundary } from "@/components/error-boundary";
+import { PageNotFound } from "@/components/page-message";
 import { Button } from "@/components/ui/button";
 import { createCellContext, DataTable, dataTableColumns, NUM } from "@/components/ui/data-table";
 import { type ExportColumn, seconds } from "@/lib/table-export";
@@ -84,7 +86,9 @@ const providerQuery = (provider: string, range: TimeRange) =>
 export const Route = createFileRoute("/_authed/_workspace/providers/$provider")({
   validateSearch,
   loader: async ({ params, location }) => {
-    if (!isKnownProvider(params.provider)) throw notFound();
+    // An unknown provider says so inside the app (ProviderPage). Throwing notFound() would show
+    // it in place of the whole app, sidebar included.
+    if (!isKnownProvider(params.provider)) return null;
     const search = validateSearch(location.search);
     const report = await loadPage(providerQuery(params.provider, rangeOf(search)));
     // Nothing ran here this month: look back further before leading with how to start.
@@ -101,7 +105,9 @@ export const Route = createFileRoute("/_authed/_workspace/providers/$provider")(
 
 // Keyed by provider, so moving to another provider's page starts from its own loaded report.
 function ProviderPage() {
-  const { report, unused } = Route.useLoaderData();
+  const loaded = Route.useLoaderData();
+  if (!loaded) return <PageNotFound />;
+  const { report, unused } = loaded;
   return <ProviderView key={report.provider} first={report} unused={unused} />;
 }
 
@@ -164,7 +170,7 @@ function ProviderView({ first, unused }: { first: ProviderReport; unused: boolea
         </div>
       </header>
 
-      {evaluable && <ProviderEvaluations provider={provider} />}
+      <SectionBoundary>{evaluable && <ProviderEvaluations provider={provider} />}</SectionBoundary>
 
       {notSetUp ? (
         <SetUp provider={provider} />
@@ -181,17 +187,25 @@ function ProviderView({ first, unused }: { first: ProviderReport; unused: boolea
             </p>
           ) : (
             <>
-              <Totals report={report} />
-              <ProviderTrendsCard
-                provider={provider}
-                range={range}
-                metric={search.chart ?? "wait"}
-                percentile={search.p ?? 50}
-                onMetric={(chart) => setSearch({ chart: unlessDefault(chart, "wait") })}
-                onPercentile={(p) => setSearch({ p: unlessDefault(p, 50) })}
-              />
-              <Runners report={report} />
-              <Workflows report={report} />
+              <SectionBoundary>
+                <Totals report={report} />
+              </SectionBoundary>
+              <SectionBoundary>
+                <ProviderTrendsCard
+                  provider={provider}
+                  range={range}
+                  metric={search.chart ?? "wait"}
+                  percentile={search.p ?? 50}
+                  onMetric={(chart) => setSearch({ chart: unlessDefault(chart, "wait") })}
+                  onPercentile={(p) => setSearch({ p: unlessDefault(p, 50) })}
+                />
+              </SectionBoundary>
+              <SectionBoundary>
+                <Runners report={report} />
+              </SectionBoundary>
+              <SectionBoundary>
+                <Workflows report={report} />
+              </SectionBoundary>
               <p className="text-xs text-muted-foreground">
                 {costNote(report)} RelayRunner reads job timings from GitHub and never sees your
                 bill, so costs are estimates at list prices (checked {report.pricesChecked}), before
@@ -202,23 +216,29 @@ function ProviderView({ first, unused }: { first: ProviderReport; unused: boolea
         </div>
       )}
 
-      {provider === "github" && <IncludedMinutes />}
-      {isFreeMinutesProvider(provider) && <ProviderFreeMinutes provider={provider} />}
+      <SectionBoundary>{provider === "github" && <IncludedMinutes />}</SectionBoundary>
+      <SectionBoundary>
+        {isFreeMinutesProvider(provider) && <ProviderFreeMinutes provider={provider} />}
+      </SectionBoundary>
 
-      <ProviderPlans provider={provider} />
+      <SectionBoundary>
+        <ProviderPlans provider={provider} />
+      </SectionBoundary>
 
-      {catalog.length ? (
-        <MachinePrices
-          provider={provider}
-          catalog={catalog}
-          runners={report.runners}
-          view={search.prices ?? "grid"}
-          onView={(view) => setSearch({ prices: unlessDefault(view, "grid") })}
-        />
-      ) : (
-        // Providers operators added have one price and no catalog.
-        <Prices prices={report.prices} />
-      )}
+      <SectionBoundary>
+        {catalog.length ? (
+          <MachinePrices
+            provider={provider}
+            catalog={catalog}
+            runners={report.runners}
+            view={search.prices ?? "grid"}
+            onView={(view) => setSearch({ prices: unlessDefault(view, "grid") })}
+          />
+        ) : (
+          // Providers operators added have one price and no catalog.
+          <Prices prices={report.prices} />
+        )}
+      </SectionBoundary>
 
       {!notSetUp && info.example && (
         <div className="grid max-w-3xl gap-3">
@@ -233,7 +253,9 @@ function ProviderView({ first, unused }: { first: ProviderReport; unused: boolea
         </div>
       )}
 
-      <PriceChanges prices={report.prices} />
+      <SectionBoundary>
+        <PriceChanges prices={report.prices} />
+      </SectionBoundary>
     </section>
   );
 }

@@ -1,8 +1,10 @@
+import { SectionBoundary } from "@/components/error-boundary";
+import { PageNotFound } from "@/components/page-message";
 // Evaluate a provider: run one workflow on it five times and compare with how it runs today
 // (apps/api/src/reports/evaluations.ts). Without `?id` it walks through connecting the provider and
 // picking a workflow; with one it shows that evaluation's runs, then the comparison.
 import { providerPlans } from "@relayrunner/providers";
-import { createFileRoute, Link, notFound, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -69,18 +71,21 @@ export const Route = createFileRoute("/_authed/_workspace/providers/$provider_/e
   validateSearch: (search: Record<string, unknown>): EvaluateSearch => ({
     id: typeof search.id === "string" && search.id ? search.id : undefined,
   }),
-  beforeLoad: ({ params }) => {
-    if (!isKnownProvider(params.provider) || evaluationSizes(params.provider).length === 0)
-      throw notFound();
-  },
   component: EvaluatePage,
 });
 
 // How often a running evaluation, and the setup's checks, look again.
 const POLL_MS = 10_000;
 
+// An unknown provider, or one that can't run evaluations, says so inside the app. Throwing
+// notFound() would show it in place of the whole app, sidebar included.
 function EvaluatePage() {
   const { provider } = Route.useParams();
+  if (!isKnownProvider(provider) || evaluationSizes(provider).length === 0) return <PageNotFound />;
+  return <EvaluateView provider={provider} />;
+}
+
+function EvaluateView({ provider }: { provider: string }) {
   const { id } = Route.useSearch();
   const { current } = Route.useRouteContext();
   const info = providerInfo(provider);
@@ -589,7 +594,9 @@ function EvaluationView({
   return (
     <>
       <EvaluateHeader provider={provider} report={report} actions={<NextSteps report={report} />} />
-      <Results report={report} editable={editable} onChange={again} />
+      <SectionBoundary>
+        <Results report={report} editable={editable} onChange={again} />
+      </SectionBoundary>
     </>
   );
 }
@@ -859,7 +866,9 @@ export function Results({
         </div>
       )}
 
-      {report.state === "failed" && <FailedJobs report={report} preview={preview} />}
+      <SectionBoundary>
+        {report.state === "failed" && <FailedJobs report={report} preview={preview} />}
+      </SectionBoundary>
 
       {!empty && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -916,9 +925,11 @@ export function Results({
         </div>
       )}
 
-      {!empty && <RunsChart report={report} current={current?.attempt ?? null} />}
+      <SectionBoundary>
+        {!empty && <RunsChart report={report} current={current?.attempt ?? null} />}
+      </SectionBoundary>
 
-      {current && <LiveRun report={report} attempt={current} />}
+      <SectionBoundary>{current && <LiveRun report={report} attempt={current} />}</SectionBoundary>
 
       {(finished > 0 || blocked) && (
         <div className="overflow-x-auto rounded-xl border bg-card">
