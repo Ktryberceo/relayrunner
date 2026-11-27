@@ -3,6 +3,7 @@ import { providerPlans } from "@relayrunner/providers";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowUpRightIcon,
+  CheckIcon,
   ClockIcon,
   GitBranchIcon,
   LoaderCircleIcon,
@@ -36,6 +37,7 @@ import { clock, plural } from "@/lib/job-times";
 import { providerInfo } from "@/lib/provider-catalog";
 import { getProviderApps } from "@/lib/provider-apps";
 import { routePrompt } from "@/lib/route-repo";
+import { readFlag, saveFlag } from "@/lib/stored-flag";
 import { useCopy } from "@/lib/use-copy";
 import { cn } from "@/lib/utils";
 import { EVALUATE_STEP, EvaluateStepper } from "@/components/evaluate-stepper";
@@ -46,16 +48,22 @@ import { usePolled, workflowFile, about } from "@/features/evaluations/shared";
 export function Setup({
   provider,
   workspaceId,
+  account,
   editable,
 }: {
   provider: string;
   workspaceId: string;
+  account: string | null;
   editable: boolean;
 }) {
-  // Null: GitHub can't tell (a personal account), so it isn't asked.
+  // Null: GitHub can't tell (a personal account, or the read failed), so the person says so
+  // instead, once per browser, as `relayrunner eval` asks them to.
   const apps = usePolled(() => getProviderApps(workspaceId), true, [workspaceId]);
+  const confirmKey = `evaluate.app-confirmed.${workspaceId}.${provider}`;
+  const [confirmed, setConfirmed] = useState(() => readFlag(confirmKey));
   const loaded = apps.value !== undefined || apps.error !== null;
-  const connected = !apps.value || apps.value.includes(provider as never);
+  const unknown = apps.value === null || (apps.value === undefined && apps.error !== null);
+  const connected = unknown ? confirmed : !!apps.value?.includes(provider as never);
   if (!loaded) return <EvaluateStepper at={EVALUATE_STEP.provider} provider={provider} />;
   return (
     <>
@@ -66,13 +74,36 @@ export function Setup({
       {connected ? (
         <Choose provider={provider} editable={editable} />
       ) : (
-        <Connect provider={provider} />
+        <Connect
+          provider={provider}
+          account={account}
+          onConfirm={
+            unknown
+              ? () => {
+                  saveFlag(confirmKey, true);
+                  setConfirmed(true);
+                }
+              : undefined
+          }
+        />
       )}
     </>
   );
 }
 
-function Connect({ provider }: { provider: string }) {
+/**
+ * The provider's sign-up steps. `onConfirm` is set when GitHub can't say whether its app is
+ * installed: the person confirms it themselves instead of the page watching for it.
+ */
+function Connect({
+  provider,
+  account,
+  onConfirm,
+}: {
+  provider: string;
+  account: string | null;
+  onConfirm?: () => void;
+}) {
   const { name } = providerInfo(provider);
   const connectUrl = providerPlans(provider)?.connectUrl ?? providerInfo(provider).docsUrl;
   return (
@@ -85,8 +116,9 @@ function Connect({ provider }: { provider: string }) {
           <div className="grid gap-1">
             <span className="font-semibold">Connect {name} first</span>
             <span className="text-sm text-muted-foreground">
-              {name} runs jobs for organizations that have its GitHub App installed. Sign up there
-              and install it on your organization; this page moves on as soon as it sees the app.
+              {onConfirm
+                ? `${name} runs jobs for accounts that have its GitHub App installed. GitHub doesn't show which apps are on ${account ?? "this account"}, so confirm it here once it's installed.`
+                : `${name} runs jobs for organizations that have its GitHub App installed. Sign up there and install it on your organization; this page moves on as soon as it sees the app.`}
             </span>
           </div>
         </div>
@@ -101,12 +133,15 @@ function Connect({ provider }: { provider: string }) {
             <span className="flex size-5 items-center justify-center rounded-full border text-xs">
               2
             </span>
-            Install the {name} GitHub App on your organization
+            Install the {name} GitHub App on{" "}
+            {onConfirm ? (account ?? "your account") : "your organization"}
           </li>
-          <li className="flex items-center gap-3 text-muted-foreground">
-            <LoaderCircleIcon aria-hidden className="size-5 animate-spin text-run" />
-            Looking for the app on your organization
-          </li>
+          {!onConfirm && (
+            <li className="flex items-center gap-3 text-muted-foreground">
+              <LoaderCircleIcon aria-hidden className="size-5 animate-spin text-run" />
+              Looking for the app on your organization
+            </li>
+          )}
         </ol>
       </div>
       {connectUrl && (
@@ -117,7 +152,21 @@ function Connect({ provider }: { provider: string }) {
               <ArrowUpRightIcon className="size-3.5" />
             </a>
           </Button>
+          {onConfirm && (
+            <Button variant="outline" onClick={onConfirm}>
+              <CheckIcon />
+              It's installed
+            </Button>
+          )}
           <span className="text-sm text-muted-foreground">Opens {name} in a new tab.</span>
+        </div>
+      )}
+      {!connectUrl && onConfirm && (
+        <div>
+          <Button variant="outline" onClick={onConfirm}>
+            <CheckIcon />
+            It's installed
+          </Button>
         </div>
       )}
     </div>

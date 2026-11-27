@@ -12,7 +12,7 @@ const BAR_START: &str = "┌";
 const BAR_END: &str = "└";
 
 #[derive(Clone, Copy)]
-enum Style {
+pub(crate) enum Style {
     Gray,
     Green,
     Blue,
@@ -21,9 +21,10 @@ enum Style {
     Cyan,
     Dim,
     Strike,
+    Bold,
 }
 
-fn paint(style: Style, text: &str) -> String {
+pub(crate) fn paint(style: Style, text: &str) -> String {
     if !colored() {
         return text.to_string();
     }
@@ -36,12 +37,20 @@ fn paint(style: Style, text: &str) -> String {
         Style::Cyan => "36",
         Style::Dim => "2",
         Style::Strike => "9",
+        Style::Bold => "1",
     };
     format!("\x1b[{code}m{text}\x1b[0m")
 }
 
+static TO_STDERR: AtomicBool = AtomicBool::new(false);
+
+/// Sends what people read to stderr, so stdout carries only a command's `--json`.
+pub fn use_stderr() {
+    TO_STDERR.store(true, Ordering::SeqCst);
+}
+
 fn to_stderr() -> bool {
-    crate::events::on()
+    crate::events::on() || TO_STDERR.load(Ordering::SeqCst)
 }
 
 /// Whether the stream people read is a terminal.

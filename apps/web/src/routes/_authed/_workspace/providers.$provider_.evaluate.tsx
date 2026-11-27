@@ -51,6 +51,7 @@ function EvaluateView({ provider }: { provider: string }) {
           <Setup
             provider={provider}
             workspaceId={current.workspace.id}
+            account={current.installations[0]?.accountLogin ?? null}
             editable={canManage(current.role)}
           />
         </>
