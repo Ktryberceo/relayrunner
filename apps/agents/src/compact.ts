@@ -133,3 +133,112 @@ export function compactJobTimes(
     workflows,
   };
 }
+
+// The Providers pages' answers (apps/api/src/reports/provider-report.ts, provider-trends.ts and
+// route-outcomes.ts), declared with only the fields these read: the rest passes through as the
+// dashboard has it.
+
+interface ProviderCounts {
+  waits: number;
+  quickStarts: number;
+}
+
+type Percentiles = Record<"p50" | "p90" | "p99", number> | null;
+
+export interface ProvidersAnswer {
+  days: number;
+  providers: (ProviderCounts & { provider: string; stat: Stat; runners: unknown[] })[];
+}
+
+export interface RouteOutcomesAnswer {
+  runs: number;
+  first: number;
+  movedOn: number;
+  waited: number;
+  failed: number;
+  reasons: unknown[];
+}
+
+export interface ProviderAnswer extends ProviderCounts {
+  stat: Stat;
+  /** List prices with their history, which perMinute on each runner type already gives. */
+  prices: unknown[];
+  runners: (ProviderCounts & { key: string; stat: Stat })[];
+}
+
+export interface ProviderTrendsAnswer {
+  bucketMs: number;
+  runners: {
+    key: string;
+    points: {
+      start: number;
+      jobs: number;
+      runnerFailures: number;
+      wait: Percentiles;
+      run: Percentiles;
+    }[];
+  }[];
+}
+
+const seconds = (ms: number | null) => (ms === null ? null : Math.round(ms / 1000));
+
+const secondsAt = (p: Percentiles) =>
+  p && { p50: seconds(p.p50), p90: seconds(p.p90), p99: seconds(p.p99) };
+
+/** Counts with the share of jobs started within a minute instead of the two counts behind it. */
+function counts<T extends ProviderCounts>({ waits, quickStarts, ...rest }: T) {
+  return {
+    ...rest,
+    startedWithinMinute: waits ? Math.round((quickStarts / waits) * 100) / 100 : null,
+  };
+}
+
+/** A Stat's times in seconds, and how many successful runs they come from. */
+const times = (stat: Stat) => ({
+  medianSeconds: seconds(stat.medianMs),
+  p90Seconds: seconds(stat.p90Ms),
+  waitSeconds: seconds(stat.waitMs),
+  samples: stat.samples,
+});
+
+/** Every provider in the window, and how the Router's routed runs went. */
+export function compactProviders(overview: ProvidersAnswer, outcomes: RouteOutcomesAnswer) {
+  const { runs, first, movedOn, waited, failed, reasons } = outcomes;
+  return {
+    days: overview.days,
+    providers: overview.providers.map(({ stat, runners, ...provider }) => ({
+      ...counts(provider),
+      ...times(stat),
+      runnerTypes: runners.length,
+    })),
+    routerOutcomes: { runs, first, movedOn, waited, failed, reasons },
+  };
+}
+
+/** One provider's runner types, with their queue wait and job time percentiles over time. */
+export function compactProvider(report: ProviderAnswer, trends: ProviderTrendsAnswer) {
+  const byKey = new Map(trends.runners.map((runner) => [runner.key, runner.points]));
+  const { stat, runners, prices: _, ...rest } = report;
+  return {
+    ...counts(rest),
+    ...times(stat),
+    bucket: trends.bucketMs >= 7 * 86_400_000 ? "week" : "day",
+    runners: runners.map(({ stat, ...runner }) => {
+      // Only the busiest few runner types have charts.
+      const points = byKey.get(runner.key);
+      return {
+        ...counts(runner),
+        ...times(stat),
+        ...(points && {
+          overTime: points.map((point) => ({
+            date: new Date(point.start).toISOString().slice(0, 10),
+            jobs: point.jobs,
+            runnerFailures: point.runnerFailures,
+            waitSeconds: secondsAt(point.wait),
+            runSeconds: secondsAt(point.run),
+          })),
+        }),
+      };
+    }),
+  };
+}

@@ -13,6 +13,17 @@ import {
   FEEDBACK_CATEGORIES,
   FEEDBACK_LIMITS,
 } from "@relayrunner/activity";
+import {
+  AGENT_FILTERS,
+  BREAKDOWN_BY,
+  BREAKDOWN_DEFAULT_ROWS,
+  BREAKDOWN_MAX_ROWS,
+  BREAKDOWN_SORTS,
+  MAX_UTC_OFFSET_MINUTES,
+  RAW_RETENTION_DAYS,
+  RUN_FILTER_HELP,
+  RUN_FILTER_KEYS,
+} from "@relayrunner/api-types";
 import { ERRORS } from "@relayrunner/errors";
 import { AUTO_SIZES } from "@relayrunner/providers";
 import { RETRY_RUNNERS, RUNNER_KEYS } from "@relayrunner/runner-order";
@@ -36,6 +47,27 @@ const daysQuery = (max: number, fallback: number) => ({
   description: `How many days back to look (1 to ${max}).`,
   schema: { type: "integer", minimum: 1, maximum: max, default: fallback },
 });
+
+const stringQuery = (name: string, description: string, extra: object = {}) => ({
+  name,
+  in: "query",
+  required: false,
+  description,
+  schema: { type: "string", ...extra },
+});
+
+// Who and what started the runs a report counts, matched exactly.
+const runFilterQueries = RUN_FILTER_KEYS.map((key) =>
+  stringQuery(key, RUN_FILTER_HELP[key], key === "agent" ? { enum: AGENT_FILTERS } : {}),
+);
+
+const providerPath = {
+  name: "provider",
+  in: "path",
+  required: true,
+  description: "A provider's id, such as github, machine or blacksmith.",
+  schema: { type: "string" },
+};
 
 /** A JSON object response whose listed fields are always there. */
 const object = (description: string, properties: Record<string, object> = {}) => ({
@@ -316,8 +348,9 @@ export const openApi = {
     "/runs": read(
       "listRuns",
       "List runs",
-      "Workflow runs from the last 14 days, newest first.",
+      "Workflow runs, newest first, at most 200.",
       object("Recent runs.", { runs: list, truncated: { type: "boolean" } }),
+      [daysQuery(RAW_RETENTION_DAYS, 14), ...runFilterQueries],
     ),
     "/runs/{repositoryId}/{runId}/{runAttempt}/jobs": read(
       "getRunJobs",
@@ -391,9 +424,66 @@ export const openApi = {
     "/usage": read(
       "getUsage",
       "Get usage",
-      "Jobs under a minute and what rounding up to whole minutes cost.",
+      "Jobs under a minute and what rounding up to whole minutes cost. The run filters count only the last 62 days.",
       object("The usage report."),
-      [daysQuery(90, 30)],
+      [daysQuery(90, 30), ...runFilterQueries],
+    ),
+    "/usage/pull-requests": read(
+      "getPullRequestMinutes",
+      "Get minutes per pull request",
+      "CI minutes per pull request, across its pushes and re-runs, with re-run minutes, estimated cost and commits, the most minutes first.",
+      object("Minutes per pull request.", { pullRequests: list, outside: list }),
+      [daysQuery(RAW_RETENTION_DAYS, 30)],
+    ),
+    "/usage/breakdown": read(
+      "getBreakdown",
+      "Get a breakdown",
+      "The workspace's jobs added up one way: runs, jobs, minutes, billed minutes, estimated cost at GitHub's rates, failures and average wait per row, optionally per day.",
+      object("The breakdown.", { by: { type: "string" }, total: record, rows: list }),
+      [
+        {
+          name: "by",
+          in: "query",
+          required: true,
+          schema: { type: "string", enum: BREAKDOWN_BY },
+        },
+        daysQuery(RAW_RETENTION_DAYS, 30),
+        stringQuery("sort", "What the rows are ordered by.", {
+          enum: BREAKDOWN_SORTS,
+          default: "minutes",
+        }),
+        {
+          name: "limit",
+          in: "query",
+          required: false,
+          schema: {
+            type: "integer",
+            minimum: 1,
+            maximum: BREAKDOWN_MAX_ROWS,
+            default: BREAKDOWN_DEFAULT_ROWS,
+          },
+        },
+        {
+          name: "perDay",
+          in: "query",
+          required: false,
+          description: "1 adds each row's numbers per day.",
+          schema: { type: "integer", enum: [0, 1], default: 0 },
+        },
+        {
+          name: "utcOffset",
+          in: "query",
+          required: false,
+          description: "Minutes east of UTC, so days end at the reader's midnight.",
+          schema: {
+            type: "integer",
+            minimum: -MAX_UTC_OFFSET_MINUTES,
+            maximum: MAX_UTC_OFFSET_MINUTES,
+            default: 0,
+          },
+        },
+        ...runFilterQueries,
+      ],
     ),
     "/usage/checks": read(
       "getCheckSavings",
@@ -413,7 +503,35 @@ export const openApi = {
       "Get job times",
       "How long each job usually takes on each runner environment.",
       object("Job times by workflow, job and environment."),
-      [daysQuery(30, 14)],
+      [daysQuery(30, 14), ...runFilterQueries],
+    ),
+    "/providers": read(
+      "listProviders",
+      "List providers",
+      "Each provider jobs ran on: jobs, failures, billed minutes, estimated cost at list price, quick starts, runner failures and times, with billed minutes in the window before.",
+      object("Providers.", { days: { type: "integer" }, providers: list }),
+      [daysQuery(RAW_RETENTION_DAYS, 30)],
+    ),
+    "/providers/{provider}": read(
+      "getProvider",
+      "Get a provider",
+      "One provider's runner types, with counts, price per minute and times, and the workflows that use it most.",
+      object("The provider.", { provider: { type: "string" }, runners: list }),
+      [providerPath, daysQuery(RAW_RETENTION_DAYS, 30)],
+    ),
+    "/providers/{provider}/trends": read(
+      "getProviderTrends",
+      "Get a provider's trends",
+      "Queue wait and job time at p50 to p99, and runner failures, for the provider's busiest runner types, a day (or a week) at a time.",
+      object("The provider's trends.", { bucketMs: { type: "integer" }, runners: list }),
+      [providerPath, daysQuery(RAW_RETENTION_DAYS, 30)],
+    ),
+    "/workspaces/{workspaceId}/route-outcomes": read(
+      "getRouteOutcomes",
+      "Get routing outcomes",
+      "How routed runs went: took their first step, moved further down the runner order (and why), waited for a busy machine, or found nothing that could take them.",
+      object("Routing outcomes.", { runs: { type: "integer" }, reasons: list }),
+      [workspacePath, daysQuery(RAW_RETENTION_DAYS, 7)],
     ),
     "/signals": read(
       "getSignals",
