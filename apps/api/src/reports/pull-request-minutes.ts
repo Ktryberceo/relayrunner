@@ -8,10 +8,14 @@
  * repo and branch to a pull request another run on that branch named. The default branch is never
  * matched. What's left counts as outside pull requests, per repo.
  *
+ * When each opened and merged comes from pull_request (src/ingest/pull-requests.ts), which has
+ * rows only for pull requests with a delivery since it began; the first job's start stands in for
+ * the rest.
+ *
  * Reads job_timing's own rows, so the route keeps the window within RAW_RETENTION_DAYS.
  */
 import { and, eq, gte, lt, sql } from "drizzle-orm";
-import { type Db, schema } from "../db/index.ts";
+import { type Db, isMissingTable, schema } from "../db/index.ts";
 import { loadPriceBook } from "../providers/prices.ts";
 import { BILLED_MINUTES, DURATION_MS, RAN_ON_RUNNER } from "./job-sql.ts";
 import type { Window } from "./report-window.ts";
@@ -32,6 +36,12 @@ export interface PullRequestMinutes {
   cost: number;
   /** Distinct commits that ran. */
   commits: number;
+  /** When it opened, merged and closed, epoch ms. Null when not, or not known. */
+  openedAt: number | null;
+  mergedAt: number | null;
+  closedAt: number | null;
+  /** When its first job in the window started, epoch ms. */
+  firstRunAt: number;
 }
 
 export interface PullRequestReport {
@@ -80,6 +90,7 @@ export async function pullRequestReport(
       runMs: sql<number>`sum(${DURATION_MS})`,
       rerunMs: sql<number>`sum(case when ${job.runAttempt} > 1 then ${DURATION_MS} else 0 end)`,
       billedMinutes: sql<number>`sum(${BILLED_MINUTES})`,
+      firstAt: sql<number>`min(coalesce(${job.startedAt}, ${job.completedAt}))`,
     })
     .from(job)
     .leftJoin(run, and(eq(run.id, job.runId), eq(run.runAttempt, job.runAttempt)))
@@ -112,7 +123,30 @@ export async function pullRequestReport(
     .where(and(counted, offDefault))
     .groupBy(job.repositoryFullName, run.pullRequestNumber, run.headBranch);
 
-  const [sums, metas] = await Promise.all([sumsQuery, metaQuery]);
+  const datesQuery = db
+    .select({
+      repository: schema.pullRequest.repositoryFullName,
+      number: schema.pullRequest.number,
+      openedAt: schema.pullRequest.openedAt,
+      mergedAt: schema.pullRequest.mergedAt,
+      closedAt: schema.pullRequest.closedAt,
+    })
+    .from(schema.pullRequest)
+    // Only pull requests a run in the window named (the primary key answers each).
+    .where(
+      sql`(${schema.pullRequest.repositoryId}, ${schema.pullRequest.number}) in (
+        select distinct ${job.repositoryId}, ${run.pullRequestNumber} from ${job}
+        inner join ${run} on ${run.id} = ${job.runId} and ${run.runAttempt} = ${job.runAttempt}
+        where ${counted} and ${run.pullRequestNumber} is not null)`,
+    )
+    // Before its migration has run, every pull request goes without dates.
+    .catch((error) => {
+      if (isMissingTable(error)) return [];
+      throw error;
+    });
+
+  const [sums, metas, dates] = await Promise.all([sumsQuery, metaQuery, datesQuery]);
+  const datesOf = new Map(dates.map((row) => [prKey(row.repository, row.number), row]));
 
   // Each branch's pull request, the newest named run winning on a reused branch; and the title of
   // each pull request's newest named run.
@@ -137,6 +171,7 @@ export async function pullRequestReport(
       continue;
     }
     const key = prKey(row.repository, number);
+    const dates = datesOf.get(key);
     const pr = pullRequests.get(key) ?? {
       repository: row.repository,
       number,
@@ -145,8 +180,13 @@ export async function pullRequestReport(
       rerunMinutes: 0,
       cost: 0,
       commits: 0,
+      openedAt: dates?.openedAt?.getTime() ?? null,
+      mergedAt: dates?.mergedAt?.getTime() ?? null,
+      closedAt: dates?.closedAt?.getTime() ?? null,
+      firstRunAt: Number(row.firstAt),
     };
     const cls = runnerClass(row.labels, row.runnerGroupName);
+    pr.firstRunAt = Math.min(pr.firstRunAt, Number(row.firstAt));
     pr.minutes += minutes;
     pr.rerunMinutes += Number(row.rerunMs) / 60_000;
     pr.cost +=
