@@ -1,4 +1,4 @@
-import type { FailureCause } from "@relayrunner/api-types";
+import type { FailureCause, RunAgent, RunFilters } from "@relayrunner/api-types";
 import { api } from "@/lib/api";
 import { pageQuery } from "@/lib/query";
 import type { RouteWalk } from "@/lib/route-walk";
@@ -18,6 +18,8 @@ export type Run = {
   title: string | null;
   event: string | null;
   actor: string | null;
+  /** The coding agent it came from, `likely` when only its branch name says so. */
+  agent: RunAgent | null;
   /** The commit the run is for. Null when only job data is known. */
   sha: string | null;
   branch: string | null;
@@ -120,7 +122,7 @@ export type JobUsage = {
 /** A job a runner finished (GET /api/runs/jobs). */
 export type HistoryJob = JobRun &
   // Its run's, null for runs from before they were stored.
-  Pick<Run, "sha" | "actor" | "branch" | "pullRequest" | "title"> & {
+  Pick<Run, "sha" | "actor" | "agent" | "branch" | "pullRequest" | "title"> & {
     repositoryId: number;
     repository: string;
     workflow: string | null;
@@ -149,23 +151,21 @@ export const pullRequestUrl = (repository: string, number: number) =>
 export const HISTORY_DEFAULT_RANGE: TimeRange = "7d";
 
 /** The workspace's runs in a range, or with `only`, just one workflow's. */
-export function getRuns(range: TimeRange, only?: WorkflowRef) {
-  const query = reportQuery(range);
-  if (only) {
-    const filter = new URLSearchParams({ repo: only.repository, workflow: only.workflow });
-    return api<RunsReport>(`/runs?${query}&${filter}`);
-  }
-  return api<RunsReport>(`/runs?${query}`);
+export function getRuns(range: TimeRange, only?: WorkflowRef, filters: RunFilters = {}) {
+  const extra = only ? { repo: only.repository, workflow: only.workflow } : {};
+  return api<RunsReport>(`/runs?${reportQuery(range, { ...filters, ...extra })}`);
 }
 
-export function getJobs(range: TimeRange) {
-  return api<JobsReport>(`/runs/jobs?${reportQuery(range)}`);
+export function getJobs(range: TimeRange, filters: RunFilters = {}) {
+  return api<JobsReport>(`/runs/jobs?${reportQuery(range, { ...filters })}`);
 }
 
-// History's reports, a load per range.
-export const runsQuery = (range: TimeRange) => pageQuery(["runs", range], () => getRuns(range));
+// History's reports, a load per range and set of filters.
+export const runsQuery = (range: TimeRange, filters: RunFilters = {}) =>
+  pageQuery(["runs", range, filters], () => getRuns(range, undefined, filters));
 // Each range is its own load, since the newest jobs alone can fill a busy workspace's list.
-export const jobsQuery = (range: TimeRange) => pageQuery(["jobs", range], () => getJobs(range));
+export const jobsQuery = (range: TimeRange, filters: RunFilters = {}) =>
+  pageQuery(["jobs", range, filters], () => getJobs(range, filters));
 
 export function getRunJobs(run: RunIds) {
   return api<RunJobs>(`/runs/${run.repositoryId}/${run.runId}/${run.runAttempt}/jobs`);

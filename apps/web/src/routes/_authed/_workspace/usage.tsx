@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import { SectionBoundary } from "@/components/error-boundary";
 import { PageHeader } from "@/components/page-header";
 import { TimeRangePicker } from "@/components/range-picker";
@@ -8,6 +8,13 @@ import { Count } from "@/components/count";
 import { PHONE_HIDDEN } from "@/components/ui/table";
 import { loadPage, pageQuery, usePageReport } from "@/lib/query";
 import { PageTabs, USAGE_TABS as TABS, viewOf } from "@/components/page-tabs";
+import { RunFilterBar } from "@/components/run-filters";
+import {
+  hasRunFilters,
+  parseRunFilters,
+  RAW_RETENTION_DAYS,
+  type RunFilters,
+} from "@relayrunner/api-types";
 import { PullRequestUsage } from "@/components/pull-request-usage";
 import { getPullRequests, PULL_REQUEST_RANGES, type PullRequestReport } from "@/lib/pull-requests";
 import {
@@ -39,11 +46,13 @@ const RANGES: RangeOptions = {
 };
 const DEFAULT_RANGE: TimeRange = "month";
 
-type UsageData = { report: UsageReport; checks: FreeCheckSavings };
+// No check savings with filters on: optimized checks aren't workflow runs, so filters leave them out.
+type UsageData = { report: UsageReport; checks: FreeCheckSavings | null };
 
 // The job report and what the free checks saved, over the same range.
-function load(range: TimeRange): Promise<UsageData> {
-  return Promise.all([getUsage(range), getCheckSavings(range)]).then(([report, checks]) => ({
+function load(range: TimeRange, filters: RunFilters): Promise<UsageData> {
+  const checks = hasRunFilters(filters) ? null : getCheckSavings(range);
+  return Promise.all([getUsage(range, filters), checks]).then(([report, checks]) => ({
     report,
     checks,
   }));
@@ -52,7 +61,7 @@ function load(range: TimeRange): Promise<UsageData> {
 const ranges = rangeSearch(RANGES, DEFAULT_RANGE);
 
 type View = (typeof TABS)[number]["value"];
-type UsageSearch = RangeSearch & { view?: View; repo?: string };
+type UsageSearch = RangeSearch & RunFilters & { view?: View; repo?: string };
 type Loaded =
   | { view: "overview"; usage: UsageData }
   | { view: "pull-requests"; pullRequests: PullRequestReport };
@@ -64,7 +73,8 @@ function pullRequestRange(search: UsageSearch): TimeRange {
   return PULL_REQUEST_RANGES.presets.includes(range as never) ? range : DEFAULT_RANGE;
 }
 
-const usageQuery = (range: TimeRange) => pageQuery(["usage", range], () => load(range));
+const usageQuery = (range: TimeRange, filters: RunFilters) =>
+  pageQuery(["usage", range, filters], () => load(range, filters));
 const pullRequestsQuery = (range: TimeRange) =>
   pageQuery(["usage", "pull-requests", range], () => getPullRequests(range));
 
@@ -73,6 +83,7 @@ export const Route = createFileRoute("/_authed/_workspace/usage")({
     view: viewOf(TABS, search.view),
     ...ranges.validateSearch(search),
     repo: textParam(search.repo),
+    ...parseRunFilters(search),
   }),
   loaderDeps: ({ search }) => ({ view: search.view ?? "overview" }),
   // Each view loads its first range here, and another range in the page.
@@ -83,7 +94,12 @@ export const Route = createFileRoute("/_authed/_workspace/usage")({
     }
     return {
       view,
-      usage: await loadPage(usageQuery(ranges.rangeOf(location.search as UsageSearch))),
+      usage: await loadPage(
+        usageQuery(
+          ranges.rangeOf(location.search as UsageSearch),
+          parseRunFilters(location.search as UsageSearch),
+        ),
+      ),
     };
   },
   shouldReload: ({ cause }) => cause === "enter",
@@ -129,24 +145,34 @@ function PullRequests({ loaded }: { loaded: PullRequestReport }) {
 }
 
 function Overview({ loaded }: { loaded: UsageData }) {
-  const range = ranges.rangeOf(Route.useSearch());
+  const search = Route.useSearch();
+  const range = ranges.rangeOf(search);
+  const filters = useMemo(() => parseRunFilters(search), [search]);
   const setSearch = useSetSearch<UsageSearch>();
   const {
     report: { report, checks },
-  } = usePageReport(usageQuery(range), loaded);
+  } = usePageReport(usageQuery(range, filters), loaded);
 
   const { totals } = report;
   const shortShare = totals.jobs ? Math.round((totals.shortJobs / totals.jobs) * 100) : 0;
 
   return (
     <div className="grid gap-6">
-      <TimeRangePicker
-        {...RANGES}
-        value={range}
-        onChange={(next) => setSearch(ranges.toSearch(next))}
-      />
+      <div className="flex flex-wrap items-center gap-3">
+        <TimeRangePicker
+          {...RANGES}
+          value={range}
+          onChange={(next) => setSearch(ranges.toSearch(next))}
+        />
+        <RunFilterBar range={range} value={filters} onChange={setSearch} />
+      </div>
+      {hasRunFilters(filters) && report.days > RAW_RETENTION_DAYS && (
+        <p className="text-sm text-muted-foreground">
+          With filters on, these count the last {RAW_RETENTION_DAYS} days.
+        </p>
+      )}
 
-      {checks.checks > 0 && (
+      {checks && checks.checks > 0 && (
         <SectionBoundary>
           <FreeChecks savings={checks} />
         </SectionBoundary>

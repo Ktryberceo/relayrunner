@@ -1,4 +1,5 @@
 import type {
+  RunFilters,
   PerformanceReport,
   PerformanceWorkflow,
   Stat,
@@ -69,8 +70,8 @@ export const JOB_RANGES: RangeOptions = {
   presets: ["24h", "7d", "14d", "30d", "week", "lastweek", "month", "lastmonth"],
 };
 
-export function getJobTimes(range: TimeRange) {
-  return api<JobTimesReport>(`/job-times?${reportQuery(range)}`);
+export function getJobTimes(range: TimeRange, filters: RunFilters = {}) {
+  return api<JobTimesReport>(`/job-times?${reportQuery(range, { ...filters })}`);
 }
 
 export function getJobRuns(
